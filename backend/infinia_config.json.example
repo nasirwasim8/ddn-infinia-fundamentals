@@ -1,0 +1,8 @@
+{
+  "endpoint": "https://YOUR_INFINIA_IP:8111",
+  "access_key": "YOUR_S3_ACCESS_KEY",
+  "secret_key": "YOUR_S3_SECRET_KEY",
+  "mgmt_server": "YOUR_INFINIA_IP",
+  "mgmt_user": "realm_admin",
+  "mgmt_password": "YOUR_MGMT_PASSWORD"
+}

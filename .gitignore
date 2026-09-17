@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+venv/
+env/
+.env
+*.egg-info/
+dist/
+build/
+
+# Node / React
+node_modules/
+dist/
+.cache/
+
+# Secrets & config (never commit credentials)
+backend/infinia_config.json
+backend/infinia_token.json
+backend/infinia_s3_tenants.json
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# PM2
+ecosystem.config.js

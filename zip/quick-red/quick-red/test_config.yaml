@@ -1,0 +1,97 @@
+server:
+  ip: "10.36.7.119"
+  realm:
+    username: "realm_admin"
+    password: "DDN1nfini@R0cks!"
+
+user_default_password: "MyStandardUserPassword123!"
+
+tenants:
+  marvel:
+    admin: "marvel-admin"
+    s3_dataset: "marvel-universe-s3"
+    s3_service: "marvel-universe-s3-service"
+    subtenants:
+      avengers:
+        block_dataset: "avengers-block"
+        block_service: "avengers-block-service"
+        users:
+          - "tony-stark"
+          - "steve-rogers"
+      xmen:
+        block_dataset: "xmen-block"
+        block_service: "xmen-block-service"
+        users:
+          - "charles-xavier"
+          - "erik-lensherr"
+      x-men:
+        block_dataset: xavier-school-block
+        block_service: xavier-school-block-service
+        users:
+          - professor
+          - storm
+      guardians:
+        block_dataset: milano-ship-block
+        block_service: milano-ship-block-service
+        users:
+          - star
+          - groot
+      spider-verse:
+        block_dataset: web-network-block
+        block_service: web-network-block-service
+        users:
+          - peter
+          - miles
+
+  dc:
+    admin: "dc-admin"
+    s3_dataset: "dc-universe-s3"
+    s3_service: "dc-universe-s3-service"
+    subtenants:
+      justice-league:
+        block_dataset: "justice-league-block"
+        block_service: "justice-league-block-service"
+        users:
+          - "bruce-wayne"
+          - "clark-kent"
+      titans:
+        block_dataset: "titans-block"
+        block_service: "titans-block-service"
+        users:
+          - "dick-grayson"
+          - "kory-anders"
+      batman-family:
+        block_dataset: batcave-block
+        block_service: batcave-block-service
+        users:
+          - bruce
+          - dick
+      superman-family:
+        block_dataset: fortress-solitude-block
+        block_service: fortress-solitude-block-service
+        users:
+          - clark
+          - kara
+      green-lantern-corps:
+        block_dataset: oa-central-block
+        block_service: oa-central-block-service
+        users:
+          - hal
+          - john
+
+  dark-horse:
+    admin: "dark-horse-admin"
+    s3_dataset: "dark-horse-universe-s3"
+    s3_service: "dark-horse-universe-s3-service"
+    subtenants:
+      umbrella-academy:
+        block_dataset: "umbrella-academy-block"
+        block_service: "umbrella-academy-block-service"
+        users:
+          - "luther-hargreeves"
+          - "diego-hargreeves"
+          - allison
+          - klaus
+          - five
+          - ben
+          - vanya 

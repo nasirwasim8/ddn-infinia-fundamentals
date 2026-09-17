@@ -1,0 +1,122 @@
+# DDN Infinia — Bulk Provision Sample (5 Tenants)
+# ─────────────────────────────────────────────────
+# Compatible with the Infinia Platform Console CSV/YAML Import page.
+# After import, each tenant gets:
+#   - 1 tenant admin user
+#   - 2–3 subtenants
+#   - 2–3 users per subtenant
+# ─────────────────────────────────────────────────
+
+server:
+  ip: "192.168.147.129"
+  realm:
+    username: "realm_admin"
+    password: "Adminpassword"
+
+user_default_password: "DDN@Infinia2024!"
+
+tenants:
+
+  # ── Tenant 1: AI Platform Team ──────────────────
+  ai-platform:
+    admin: "ai-platform-admin"
+    s3_dataset: "ai-platform-s3"
+    s3_service: "ai-platform-obj-service"
+    subtenants:
+      training:
+        block_dataset: "training-block"
+        block_service: "training-block-service"
+        users:
+          - "ml-engineer-01"
+          - "ml-engineer-02"
+          - "data-scientist-01"
+      inference:
+        block_dataset: "inference-block"
+        block_service: "inference-block-service"
+        users:
+          - "inference-eng-01"
+          - "inference-eng-02"
+      datasets:
+        block_dataset: "datasets-block"
+        block_service: "datasets-block-service"
+        users:
+          - "dataset-curator-01"
+
+  # ── Tenant 2: DevOps Team ───────────────────────
+  devops:
+    admin: "devops-admin"
+    s3_dataset: "devops-s3"
+    s3_service: "devops-obj-service"
+    subtenants:
+      ci-cd:
+        block_dataset: "cicd-block"
+        block_service: "cicd-block-service"
+        users:
+          - "pipeline-eng-01"
+          - "pipeline-eng-02"
+      monitoring:
+        block_dataset: "monitoring-block"
+        block_service: "monitoring-block-service"
+        users:
+          - "sre-eng-01"
+          - "sre-eng-02"
+
+  # ── Tenant 3: Research Labs ─────────────────────
+  research:
+    admin: "research-admin"
+    s3_dataset: "research-s3"
+    s3_service: "research-obj-service"
+    subtenants:
+      lab-alpha:
+        block_dataset: "lab-alpha-block"
+        block_service: "lab-alpha-block-service"
+        users:
+          - "researcher-alpha-01"
+          - "researcher-alpha-02"
+      lab-beta:
+        block_dataset: "lab-beta-block"
+        block_service: "lab-beta-block-service"
+        users:
+          - "researcher-beta-01"
+          - "researcher-beta-02"
+      lab-gamma:
+        block_dataset: "lab-gamma-block"
+        block_service: "lab-gamma-block-service"
+        users:
+          - "researcher-gamma-01"
+
+  # ── Tenant 4: Finance Department ────────────────
+  finance:
+    admin: "finance-admin"
+    s3_dataset: "finance-s3"
+    s3_service: "finance-obj-service"
+    subtenants:
+      risk-analytics:
+        block_dataset: "risk-block"
+        block_service: "risk-block-service"
+        users:
+          - "risk-analyst-01"
+          - "risk-analyst-02"
+      reporting:
+        block_dataset: "reporting-block"
+        block_service: "reporting-block-service"
+        users:
+          - "finance-reporter-01"
+
+  # ── Tenant 5: Customer Success ──────────────────
+  customer-success:
+    admin: "cs-admin"
+    s3_dataset: "cs-s3"
+    s3_service: "cs-obj-service"
+    subtenants:
+      support:
+        block_dataset: "support-block"
+        block_service: "support-block-service"
+        users:
+          - "support-eng-01"
+          - "support-eng-02"
+      onboarding:
+        block_dataset: "onboarding-block"
+        block_service: "onboarding-block-service"
+        users:
+          - "onboarding-eng-01"
