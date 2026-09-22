@@ -60,7 +60,12 @@ export default function S3AccessManager() {
     if (!form.username || !form.tenant) return toast.error('Username and tenant required')
     try {
       const r = await addS3Access(form)
-      setNewKey(r.data)
+      // Merge form context so CLI guide has subtenant/service info
+      setNewKey({
+        ...r.data,
+        subtenant: form.subtenant || form.tenant,
+        service: form.service || `${form.tenant}obj`,
+      })
       toast.success('S3 access added')
       setShowAdd(false)
       setForm({ username: '', tenant: '', subtenant: '', service: 'redobj', expiry: '1y' })
@@ -119,7 +124,39 @@ export default function S3AccessManager() {
               <CopyBtn text={val} />
             </div>
           ))}
-          <button onClick={() => setNewKey(null)} style={{ fontSize: 12, background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', marginTop: 6 }}>Dismiss</button>
+
+          {/* ── Next step: create the S3 service ── */}
+          <div style={{ marginTop: 16, borderTop: '1px solid #00C28030', paddingTop: 14 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600, fontSize: 13, color: '#F59E0B', marginBottom: 8 }}>
+              <span>⚠️</span> Next Step Required — Create the S3 Service
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 10, lineHeight: 1.6 }}>
+              Keys won't work until you create an S3 service and register this user with <code style={{ background: 'var(--surface-hover)', padding: '1px 4px', borderRadius: 3 }}>-A {newKey.username}</code>.
+              Run this on the Infinia node (or via SSH):
+            </div>
+            <pre style={{
+              background: '#0D1117', color: '#E6EDF3', borderRadius: 8, padding: '12px 14px',
+              fontSize: 12, fontFamily: 'var(--font-mono)', overflowX: 'auto', margin: 0,
+              border: '1px solid rgba(255,255,255,0.08)', lineHeight: 1.7
+            }}>{`redcli service create ${newKey.service || newKey.tenant + 'obj'} \\
+  -T file-and-object -P s3 \\
+  -t ${newKey.tenant} \\
+  -s ${newKey.subtenant || newKey.tenant} \\
+  -V s3.${newKey.tenant}.infinia.io \\
+  -A ${newKey.username}`}
+            </pre>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 10, lineHeight: 1.6 }}>
+              Also add the vhost to <code style={{ background: 'var(--surface-hover)', padding: '1px 4px', borderRadius: 3 }}>/etc/hosts</code> on the machine running this app:
+            </div>
+            <pre style={{
+              background: '#0D1117', color: '#E6EDF3', borderRadius: 8, padding: '10px 14px',
+              fontSize: 12, fontFamily: 'var(--font-mono)', margin: '6px 0 0 0',
+              border: '1px solid rgba(255,255,255,0.08)'
+            }}>{`echo "192.168.147.129  s3.${newKey.tenant}.infinia.io" | sudo tee -a /etc/hosts`}
+            </pre>
+          </div>
+
+          <button onClick={() => setNewKey(null)} style={{ fontSize: 12, background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', marginTop: 12 }}>Dismiss</button>
         </div>
       )}
 

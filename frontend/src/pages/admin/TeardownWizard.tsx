@@ -17,9 +17,13 @@ export default function TeardownWizard() {
   const [tree, setTree] = useState<any>(null)
   const [loadingTree, setLoadingTree] = useState(false)
   const [confirmText, setConfirmText] = useState('')
-  const [events, setEvents] = useState<SSEEvent[]>([])
+  // Use a Map keyed by "step:name" so each step shows ONE row that updates in place
+  const [eventMap, setEventMap] = useState<Map<string, SSEEvent>>(new Map())
+  const [eventOrder, setEventOrder] = useState<string[]>([])
+  const [doneEvent, setDoneEvent] = useState<SSEEvent | null>(null)
   const [started, setStarted] = useState(false)
   const [done, setDone] = useState(false)
+
 
   useEffect(() => {
     listTenants().then(r => setTenants(r.data.tenants || [])).catch(() => toast.error('Failed to load tenants'))
@@ -27,7 +31,9 @@ export default function TeardownWizard() {
 
   const loadTree = async (tenant: string) => {
     if (!tenant) return
-    setLoadingTree(true); setTree(null); setConfirmText(''); setEvents([]); setStarted(false); setDone(false)
+    setLoadingTree(true); setTree(null); setConfirmText('')
+    setEventMap(new Map()); setEventOrder([]); setDoneEvent(null)
+    setStarted(false); setDone(false)
     try {
       const [sr, ur] = await Promise.allSettled([listSubtenants(tenant), listUsers(tenant)])
       const subs = sr.status === 'fulfilled' ? sr.value.data.subtenants || [] : []
@@ -37,8 +43,24 @@ export default function TeardownWizard() {
     finally { setLoadingTree(false) }
   }
 
+  const upsertEvent = (ev: SSEEvent) => {
+    const key = `${ev.step}:${ev.name}`
+    // Parse raw JSON error blobs into readable messages
+    let msg = ev.message || `${ev.step}: ${ev.name}`
+    if (msg.trimStart().startsWith('{') || msg.trimStart().startsWith('[')) {
+      try {
+        const parsed = JSON.parse(msg)
+        msg = parsed.detail || parsed.error || parsed.message || msg
+      } catch {}
+    }
+    const cleaned = { ...ev, message: msg }
+    setEventMap(m => new Map(m).set(key, cleaned))
+    setEventOrder(o => o.includes(key) ? o : [...o, key])
+  }
+
   const doTeardown = async () => {
-    setEvents([]); setStarted(true); setDone(false)
+    setEventMap(new Map()); setEventOrder([]); setDoneEvent(null)
+    setStarted(true); setDone(false)
     try {
       const res = await fetch('/api/admin/wizard/teardown', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -49,7 +71,11 @@ export default function TeardownWizard() {
         const { done: d, value } = await reader.read(); if (d) break
         for (const line of dec.decode(value).split('\n')) {
           if (line.startsWith('data: ')) {
-            try { const ev = JSON.parse(line.slice(6)); setEvents(e => [...e, ev]); if (ev.step === 'done') setDone(true) } catch {}
+            try {
+              const ev = JSON.parse(line.slice(6))
+              if (ev.step === 'done') { setDone(true); setDoneEvent(ev) }
+              else { upsertEvent(ev) }
+            } catch {}
           }
         }
       }
@@ -126,24 +152,35 @@ export default function TeardownWizard() {
       )}
 
       {/* Step 4: Progress */}
-      {events.length > 0 && (
+      {eventOrder.length > 0 && (
         <div style={{ background: 'var(--surface-card)', border: '1px solid var(--border-subtle)', borderRadius: 12, padding: 20 }}>
           <h3 style={{ margin: '0 0 14px 0' }}>Teardown Progress</h3>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 320, overflowY: 'auto' }}>
-            {events.map((ev, i) => (
-              <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
-                <StepIcon status={ev.status} />
-                <span style={{ fontSize: 13 }}>{ev.message || `${ev.step}: ${ev.name}`}</span>
-              </div>
-            ))}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 360, overflowY: 'auto' }}>
+            {eventOrder.map(key => {
+              const ev = eventMap.get(key)!
+              return (
+                <div key={key} style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                  <StepIcon status={ev.status} />
+                  <span style={{ fontSize: 13, color: ev.status === 'failed' ? '#ED2738' : 'var(--text-primary)' }}>
+                    {ev.message}
+                  </span>
+                </div>
+              )
+            })}
           </div>
-          {done && (
-            <div style={{ marginTop: 16, padding: '12px 16px', background: '#00C28015', border: '1px solid #00C28040', borderRadius: 8, color: '#00C280', fontWeight: 600, fontSize: 14 }}>
-              ✅ Teardown complete
+          {done && doneEvent && (
+            <div style={{
+              marginTop: 16, padding: '12px 16px', borderRadius: 8, fontWeight: 600, fontSize: 14,
+              background: doneEvent.status === 'success' ? '#00C28015' : '#ED273810',
+              border: `1px solid ${doneEvent.status === 'success' ? '#00C28040' : '#ED273840'}`,
+              color: doneEvent.status === 'success' ? '#00C280' : '#ED2738'
+            }}>
+              {doneEvent.status === 'success' ? '✅' : '⚠️'} {doneEvent.message || 'Teardown complete'}
             </div>
           )}
         </div>
       )}
+
     </div>
   )
 }

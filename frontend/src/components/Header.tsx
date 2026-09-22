@@ -1,30 +1,27 @@
-import { Sun, Moon, Circle } from 'lucide-react'
+import { Sun, Moon } from 'lucide-react'
 import { useTheme } from '../contexts/ThemeContext'
 import { useEffect, useState } from 'react'
+import type { ReactNode } from 'react'
 
 interface NavGroup { id: string; label: string }
 interface Props {
   groups: NavGroup[]
   activeGroup: string
   onGroupChange: (id: string) => void
+  tenantSlot?: ReactNode
 }
 
-export default function Header({ groups, activeGroup, onGroupChange }: Props) {
+export default function Header({ groups, activeGroup, onGroupChange, tenantSlot }: Props) {
   const { theme, toggleTheme } = useTheme()
-  const [isConnected, setIsConnected] = useState(false)
+  const [scrolled, setScrolled] = useState(false)
 
   useEffect(() => {
-    const checkConnection = () => {
-      setIsConnected(localStorage.getItem('ddn-os-connected') === 'true')
-    }
-    checkConnection()
-    window.addEventListener('storage', checkConnection)
-    const interval = setInterval(checkConnection, 2000)
-    return () => {
-      window.removeEventListener('storage', checkConnection)
-      clearInterval(interval)
-    }
+    const onScroll = () => setScrolled(window.scrollY > 10)
+    window.addEventListener('scroll', onScroll, { passive: true })
+    return () => window.removeEventListener('scroll', onScroll)
   }, [])
+
+  const borderColor = theme === 'dark' ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.12)'
 
   return (
     <header style={{
@@ -32,20 +29,47 @@ export default function Header({ groups, activeGroup, onGroupChange }: Props) {
       top: 0, left: 0, right: 0,
       height: 'var(--nav-height, 60px)',
       background: 'var(--surface-card)',
-      borderBottom: '1px solid var(--border-subtle)',
+      borderBottom: `1px solid ${borderColor}`,
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'space-between',
-      padding: '0 24px',
-      zIndex: 100
+      padding: '0 28px',
+      zIndex: 100,
+      boxShadow: scrolled ? '0 1px 12px rgba(0,0,0,0.08)' : 'none',
+      transition: 'box-shadow 0.2s',
     }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-        <Circle size={16} fill="#ED2738" color="#ED2738" />
-        <span style={{ fontWeight: 800, fontSize: '18px', letterSpacing: '-0.5px' }}>DDN</span>
-        <span style={{ color: 'var(--text-muted)', fontSize: '14px', marginLeft: '8px' }}>Infinia Object Store Validator</span>
+      {/* ── Logo — identical to KV Cache ── */}
+      <div style={{ display: 'flex', alignItems: 'center' }}>
+        <img
+          src="/logo-ddn.svg"
+          alt="DDN"
+          style={{ height: 28, width: 'auto', filter: theme === 'dark' ? 'invert(1)' : 'none' }}
+        />
+        <div style={{
+          display: 'flex', alignItems: 'baseline',
+          marginLeft: 10, paddingLeft: 10,
+          borderLeft: `1px solid ${theme === 'dark' ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.15)'}`,
+          height: 20, alignSelf: 'center',
+        }}>
+          <span style={{
+            fontSize: 13, fontWeight: 300,
+            color: theme === 'dark' ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.4)',
+            letterSpacing: '0.05em',
+          }}>
+            BUILD.DDN:
+          </span>
+          <span style={{
+            fontSize: 13, fontWeight: 700,
+            color: theme === 'dark' ? 'rgba(255,255,255,0.9)' : '#ED2738',
+            letterSpacing: '0.05em',
+          }}>
+            INFINIA
+          </span>
+        </div>
       </div>
 
-      <nav style={{ display: 'flex', gap: '24px', height: '100%' }}>
+      {/* ── Nav group tabs ── */}
+      <nav style={{ display: 'flex', gap: 4, height: '100%', alignItems: 'center' }}>
         {groups.map(group => {
           const isActive = activeGroup === group.id
           return (
@@ -54,11 +78,20 @@ export default function Header({ groups, activeGroup, onGroupChange }: Props) {
               onClick={() => onGroupChange(group.id)}
               style={{
                 background: 'none', border: 'none', cursor: 'pointer',
-                fontSize: '14px', fontWeight: isActive ? 600 : 400,
-                color: isActive ? 'var(--text-primary)' : 'var(--text-muted)',
-                height: '100%',
-                borderBottom: isActive ? '2px solid #ED2738' : '2px solid transparent',
-                transition: 'all 0.2s'
+                padding: '6px 14px',
+                borderRadius: 20,
+                fontSize: 13,
+                fontWeight: isActive ? 600 : 400,
+                letterSpacing: '0.03em',
+                color: isActive ? '#ED2738' : 'var(--text-muted)',
+                background: isActive ? 'rgba(237,39,56,0.07)' : 'transparent',
+                transition: 'all 0.15s',
+              } as React.CSSProperties}
+              onMouseEnter={e => {
+                if (!isActive) e.currentTarget.style.color = 'var(--text-primary)'
+              }}
+              onMouseLeave={e => {
+                if (!isActive) e.currentTarget.style.color = 'var(--text-muted)'
               }}
             >
               {group.label}
@@ -67,39 +100,43 @@ export default function Header({ groups, activeGroup, onGroupChange }: Props) {
         })}
       </nav>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+      {/* ── Right controls ── */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        {/* Tenant switcher slot — only shown in S3 sections */}
+        {tenantSlot && (
+          <>
+            {tenantSlot}
+            <div style={{ width: 1, height: 20, background: 'var(--border-subtle)', margin: '0 2px' }} />
+          </>
+        )}
+
+        {/* Infinia version badge */}
         <div style={{
-          display: 'flex', alignItems: 'center', gap: '8px',
-          padding: '6px 12px',
-          borderRadius: '16px',
+          display: 'flex', alignItems: 'center', gap: 6,
+          padding: '5px 11px', borderRadius: 16,
           background: 'var(--surface-primary)',
           border: '1px solid var(--border-subtle)',
-          fontSize: '12px', fontWeight: 500
+          fontSize: 11, fontWeight: 500,
+          color: 'var(--text-muted)',
         }}>
-          {isConnected ? (
-            <>
-              <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#00C280', boxShadow: '0 0 0 2px rgba(0, 194, 128, 0.2)' }} />
-              Connected
-            </>
-          ) : (
-            <>
-              <div style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--text-muted)' }} />
-              <span style={{ color: 'var(--text-muted)' }}>Not configured</span>
-            </>
-          )}
+          <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#10B981' }} />
+          Infinia 2.4.0
         </div>
-        
+
+        {/* Theme toggle */}
         <button
           onClick={toggleTheme}
           style={{
             background: 'none', border: 'none', cursor: 'pointer',
-            color: 'var(--text-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center',
-            width: 32, height: 32, borderRadius: '50%', transition: 'background 0.2s'
+            color: 'var(--text-muted)', display: 'flex', alignItems: 'center',
+            justifyContent: 'center', width: 34, height: 34,
+            borderRadius: '50%', transition: 'background 0.15s',
           }}
           onMouseOver={e => e.currentTarget.style.background = 'var(--surface-hover)'}
           onMouseOut={e => e.currentTarget.style.background = 'none'}
+          aria-label="Toggle theme"
         >
-          {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
+          {theme === 'dark' ? <Sun size={17} /> : <Moon size={17} />}
         </button>
       </div>
     </header>

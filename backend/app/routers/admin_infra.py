@@ -175,3 +175,88 @@ def get_realm():
     if r.status_code != 200:
         raise HTTPException(status_code=r.status_code, detail=r.text)
     return r.json().get('data', r.json())
+
+
+@router.get("/infra/summary")
+def get_summary():
+    """
+    Aggregate health summary: cluster + nodes + version + per-tenant capacity.
+    Used by the System Health page.
+    """
+    summary = {
+        "api_reachable": False,
+        "cluster": None,
+        "version": "Unknown",
+        "hostname": "Unknown",
+        "nodes": [],
+        "tenants": [],
+        "total_used_bytes": 0,
+        "total_quota_bytes": 0,
+    }
+
+    # ── Cluster ──
+    try:
+        cluster = get_first_cluster()
+        summary["cluster"] = cluster
+        summary["api_reachable"] = True
+    except Exception:
+        return summary
+
+    # ── Version ──
+    try:
+        vr = mgmt_get("/redapi/v1/version")
+        if vr.status_code == 200:
+            vdata = vr.json().get('data', {})
+            for ip_data in vdata.values():
+                for svc, info in ip_data.items():
+                    if isinstance(info, dict) and info.get('version', '-') != '-':
+                        summary["version"] = info.get('version', 'Unknown')
+                        summary["hostname"] = info.get('hostname', 'Unknown')
+                        break
+                if summary["version"] != 'Unknown':
+                    break
+    except Exception:
+        pass
+
+    # ── Nodes ──
+    try:
+        nr = mgmt_get(f"/redapi/v1/clusters/{cluster}/nodes")
+        if nr.status_code == 200:
+            ndata = nr.json().get('data', [])
+            nodes = ndata if isinstance(ndata, list) else list(ndata.values())
+            summary["nodes"] = [
+                {
+                    "hostname": n.get('hostname', n.get('id', 'node')),
+                    "ip":       n.get('ctrl_plane_ip', ''),
+                    "status":   n.get('status', 'unknown'),
+                }
+                for n in nodes
+            ]
+    except Exception:
+        pass
+
+    # ── Per-tenant capacity ──
+    try:
+        tr = mgmt_get(f"/redapi/v1/clusters/{cluster}/tenants")
+        if tr.status_code == 200:
+            tdata = tr.json().get('data', [])
+            tenants = tdata if isinstance(tdata, list) else list(tdata.values())
+            total_used = 0
+            total_quota = 0
+            for t in tenants:
+                used   = t.get('used_bytes', 0) or 0
+                quota  = t.get('bulk_quota', 0) or 0
+                total_used  += used
+                total_quota += quota
+                summary["tenants"].append({
+                    "name":       t.get('name', ''),
+                    "used_bytes": used,
+                    "quota_bytes": quota,
+                    "used_pct":   round(t.get('used_pct', 0) or 0, 2),
+                })
+            summary["total_used_bytes"]  = total_used
+            summary["total_quota_bytes"] = total_quota
+    except Exception:
+        pass
+
+    return summary

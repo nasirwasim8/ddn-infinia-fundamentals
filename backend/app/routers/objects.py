@@ -31,7 +31,7 @@ def list_objects(bucket: str, prefix: str = "", tenant: Optional[str] = Query(No
         raise HTTPException(status_code=400, detail=str(e))
 
 @router.post("/buckets/{bucket}/objects")
-def upload_object(bucket: str, file: UploadFile = File(...), key: str = Form(None)):
+def upload_object(bucket: str, file: UploadFile = File(...), key: str = Form(None), tenant: Optional[str] = Query(None)):
     try:
         s3 = get_s3_client(tenant)
         obj_key = key if key else file.filename
@@ -70,12 +70,14 @@ def get_object(bucket: str, key: str, tenant: Optional[str] = Query(None)):
         raise HTTPException(status_code=400, detail=str(e))
 
 @router.delete("/buckets/{bucket}/objects/{key:path}")
-def delete_object(bucket: str, key: str, version_id: str = None, tenant: Optional[str] = Query(None)):
+def delete_object(bucket: str, key: str, version_id: str = None, tenant: Optional[str] = Query(None), bypass_governance: bool = Query(False)):
     try:
         s3 = get_s3_client(tenant)
         kwargs = {'Bucket': bucket, 'Key': key}
         if version_id:
             kwargs['VersionId'] = version_id
+        if bypass_governance:
+            kwargs['BypassGovernanceRetention'] = True
         s3.delete_object(**kwargs)
         return {"status": "success"}
     except Exception as e:

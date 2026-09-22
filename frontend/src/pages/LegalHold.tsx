@@ -4,19 +4,32 @@ import * as api from '../services/api'
 import { Shield, ShieldAlert, CheckCircle, Trash2 } from 'lucide-react'
 import { motion } from 'framer-motion'
 
-export default function LegalHold() {
-  const [buckets, setBuckets] = useState<any[]>([])
+export default function LegalHold({ activeTenant }: { activeTenant?: string | null }) {
+  const [buckets, setBuckets]     = useState<any[]>([])
   const [selectedBucket, setSelectedBucket] = useState('')
+  const [objects, setObjects]     = useState<any[]>([])
   const [objectKey, setObjectKey] = useState('')
   const [holdStatus, setHoldStatus] = useState<boolean>(false)
   const [step, setStep] = useState(1)
 
   useEffect(() => {
-    api.listBuckets().then(res => {
-      setBuckets(res.buckets || [])
-      if (res.buckets?.length > 0) setSelectedBucket(res.buckets[0].Name)
+    setBuckets([]); setSelectedBucket('')
+    api.listBuckets(activeTenant).then(res => {
+      const list = res.data.buckets || []
+      setBuckets(list)
+      if (list.length > 0) setSelectedBucket(list[0].Name)
     })
-  }, [])
+  }, [activeTenant])
+
+  useEffect(() => {
+    setObjects([]); setObjectKey(''); setHoldStatus(false); setStep(1)
+    if (!selectedBucket) return
+    api.listObjects(selectedBucket, '', activeTenant).then(res => {
+      const list = res.data.objects || []
+      setObjects(list)
+      if (list.length > 0) setObjectKey(list[0].Key)
+    }).catch(() => {})
+  }, [selectedBucket, activeTenant])
 
   const checkHold = async () => {
     if (!objectKey) return
@@ -72,7 +85,18 @@ export default function LegalHold() {
         <select value={selectedBucket} onChange={e => setSelectedBucket(e.target.value)} style={{ padding: '10px', borderRadius: '6px', border: '1px solid var(--border-subtle)', background: 'var(--surface-primary)', color: 'var(--text-primary)', width: 200 }}>
           {buckets.map(b => <option key={b.Name} value={b.Name}>{b.Name}</option>)}
         </select>
-        <input value={objectKey} onChange={e => setObjectKey(e.target.value)} onBlur={checkHold} placeholder="Object Key" style={{ flex: 1, padding: '10px', borderRadius: '6px', border: '1px solid var(--border-subtle)', background: 'var(--surface-primary)', color: 'var(--text-primary)' }} />
+        {objects.length === 0 ? (
+          <div style={{ flex: 1, padding: '10px 12px', borderRadius: '6px', border: '1px solid var(--border-subtle)', background: 'var(--surface-primary)', color: 'var(--text-muted)', fontSize: 13 }}>
+            ⚠ No objects in bucket — upload a file in Object Explorer first
+          </div>
+        ) : (
+          <select
+            value={objectKey} onChange={e => { setObjectKey(e.target.value); setHoldStatus(false); setStep(1) }}
+            style={{ flex: 1, padding: '10px', borderRadius: '6px', border: '1px solid var(--border-subtle)', background: 'var(--surface-primary)', color: 'var(--text-primary)', fontSize: 13 }}
+          >
+            {objects.map((o: any) => <option key={o.Key} value={o.Key}>{o.Key}</option>)}
+          </select>
+        )}
       </div>
 
       <div style={{ display: 'flex', gap: '24px' }}>

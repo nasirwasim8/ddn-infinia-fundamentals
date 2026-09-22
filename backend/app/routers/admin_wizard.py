@@ -126,50 +126,103 @@ def provision(req: ProvisionRequest):
                 yield sse_event('subtenant-create', st.name, 'failed', 'Failed', r.text[:150])
             time.sleep(0.2)
 
-            # Create users in this subtenant
+            # Create users in this subtenant via SSH+redcli
+            # (REST API /redapi/v1/user doesn't work for tenant users)
             for u in (st.users or []):
                 if u.username == 'realm_admin':
                     continue
+
+                # ── Create tenant user via redcli ──
                 yield sse_event('user-create', u.username, 'running', f'Creating user "{u.username}"...')
-                # Correct endpoint: POST /redapi/v1/user with header params (not /clusters/.../users)
-                # Format from redapi.yaml: User_id, caps (tenant:scope), Password as headers
-                caps = f"{req.tenant}:{u.scope}" if u.scope else f"{req.tenant}:service-user"
-                r = mgmt_post(
-                    "/redapi/v1/user",
-                    extra_headers={
-                        'User_id': u.username,
-                        'Password': req.default_password or 'DDN@Infinia2024!',
-                        'caps': caps,
-                    }
-                )
-                if r.status_code in (200, 201):
-                    yield sse_event('user-create', u.username, 'success', f'User "{u.username}" created')
-                elif 'already exists' in r.text.lower() or r.status_code == 409:
-                    yield sse_event('user-create', u.username, 'skipped', f'User "{u.username}" already exists')
-                else:
-                    yield sse_event('user-create', u.username, 'failed', 'Failed', r.text[:150])
+                try:
+                    from app.ssh_helper import ssh_exec, redcli_user_add, redcli_s3_access_add
+                    added = redcli_user_add(u.username, req.tenant)
+                    if added:
+                        yield sse_event('user-create', u.username, 'success', f'User "{u.username}" created')
+                    else:
+                        yield sse_event('user-create', u.username, 'skipped', f'User "{u.username}" already exists (or skipped)')
+                except Exception as e:
+                    yield sse_event('user-create', u.username, 'failed', f'Failed: {e}')
                 time.sleep(0.2)
 
-
-                # S3 access for this user
+                # ── S3 access + service creation ──
                 if u.get_s3_access and req.dataset and req.dataset.type == 's3':
-                    svc = req.dataset.service_name or 'redobj'
-                    scope = f"{req.tenant}/{st.name}/{svc}"
+                    svc_name = req.dataset.service_name or f'{req.tenant}obj'
+                    vhost    = f's3.{req.tenant}.infinia.io'
                     yield sse_event('s3-access', u.username, 'running', f'Adding S3 access for "{u.username}"...')
-                    r = mgmt_post(
-                        "/redapi/v1/s3/access",
-                        extra_headers={'User_id': u.username, 'Scope': scope, 'Expiry': req.s3_expiry or '1y'}
-                    )
-                    if r.status_code in (200, 201):
-                        d = r.json().get('data', {})
-                        key = d.get('s3_key', '')
-                        secret = d.get('s3_secret', '')
-                        yield sse_event('s3-access', u.username, 'success',
-                                        f'S3 access granted',
-                                        json.dumps({"s3_key": key, "s3_secret": secret, "scope": scope}))
-                    else:
-                        yield sse_event('s3-access', u.username, 'failed', 'S3 access failed', r.text[:150])
+                    try:
+                        result = redcli_s3_access_add(u.username, req.tenant, req.s3_expiry or '1y')
+                        s3_key    = result.get('s3_key', '')
+                        s3_secret = result.get('s3_secret', '')
+                        yield sse_event('s3-access', u.username, 'success', 'S3 keys generated',
+                                        json.dumps({'s3_key': s3_key, 's3_secret': s3_secret}))
+                    except Exception as e:
+                        yield sse_event('s3-access', u.username, 'failed', f'S3 access failed: {e}')
+                        s3_key = s3_secret = ''
                     time.sleep(0.2)
+
+                    # ── Create S3 service (registers user in reds3 daemon) ──
+                    yield sse_event('s3-service', svc_name, 'running', f'Creating S3 service "{svc_name}"...')
+                    try:
+                        svc_cmd = (
+                            f'redcli service create {svc_name}'
+                            f' -T file-and-object -P s3'
+                            f' -t {req.tenant} -s {st.name}'
+                            f' -V {vhost}'
+                            f' -A {u.username}'
+                        )
+                        rc, out, err = ssh_exec(svc_cmd)
+                        combined = out + err
+                        if 'added' in combined.lower() or rc == 0:
+                            yield sse_event('s3-service', svc_name, 'success', f'Service "{svc_name}" created — vhost: {vhost}')
+                        elif 'already exists' in combined.lower():
+                            yield sse_event('s3-service', svc_name, 'skipped', f'Service "{svc_name}" already exists')
+                        else:
+                            yield sse_event('s3-service', svc_name, 'failed', combined[:150])
+                    except Exception as e:
+                        yield sse_event('s3-service', svc_name, 'failed', str(e))
+                    time.sleep(0.2)
+
+                    # ── Add vhost to WSL /etc/hosts ──
+                    try:
+                        import subprocess as _sp
+                        from app.config import load_config as _lc
+                        _ssh_pass = _lc().get('ssh_password', 'admin')
+                        hosts_entry = f'192.168.147.129  {vhost}'
+                        existing = open('/etc/hosts').read()
+                        if vhost not in existing:
+                            result = _sp.run(
+                                f'echo {_ssh_pass} | sudo -S tee -a /etc/hosts',
+                                input=f'\n{hosts_entry}\n',
+                                shell=True, text=True, capture_output=True
+                            )
+                            if vhost in open('/etc/hosts').read():
+                                yield sse_event('hosts', vhost, 'success', f'/etc/hosts updated: {hosts_entry}')
+                            else:
+                                yield sse_event('hosts', vhost, 'failed', f'Could not write /etc/hosts — add manually: {hosts_entry}')
+                        else:
+                            yield sse_event('hosts', vhost, 'skipped', f'{vhost} already in /etc/hosts')
+                    except Exception as e:
+                        yield sse_event('hosts', vhost, 'skipped', f'/etc/hosts not updated: {e}')
+                    time.sleep(0.1)
+
+                    # ── Auto-save credentials to infinia_s3_tenants.json ──
+                    if s3_key and s3_secret:
+                        try:
+                            from app.config import load_config, save_s3_tenant
+                            base_cfg = load_config()
+                            port = base_cfg.get('endpoint', 'https://192.168.147.129:8111').split(':')[-1].rstrip('/')
+                            save_s3_tenant(req.tenant, {
+                                'tenant_name': req.tenant,
+                                'endpoint':    f'https://{vhost}:{port}',
+                                'access_key':  s3_key,
+                                'secret_key':  s3_secret,
+                                'description': f'Provisioned: user {u.username}',
+                            })
+                            yield sse_event('config', req.tenant, 'success',
+                                           f'S3 credentials saved — tenant "{req.tenant}" ready in S3 Configuration')
+                        except Exception as e:
+                            yield sse_event('config', req.tenant, 'skipped', f'Credential save skipped: {e}')
 
         yield sse_event('done', 'provision', 'success',
                         f'Tenant "{req.tenant}" fully provisioned with {len(req.subtenants or [])} subtenants.')
@@ -191,59 +244,124 @@ def teardown(req: TeardownRequest):
         cluster = get_first_cluster()
         if not cluster:
             yield sse_event('init', 'cluster', 'failed', 'Cannot reach management API. Please login first.')
+            yield sse_event('init', cluster, 'failed', 'Cannot reach management API. Please login first.')
             return
 
         yield sse_event('init', cluster, 'success', f'Starting teardown of tenant "{req.tenant}"')
 
-        # Get subtenants
-        r = mgmt_get(f"/redapi/v1/clusters/{cluster}/tenants/{req.tenant}/subtenants?recurse=true")
+        try:
+            from app.ssh_helper import ssh_exec
+            from app.config_mgmt import load_config as _cfg
+        except Exception as e:
+            yield sse_event('init', 'ssh', 'failed', f'Cannot import SSH helper: {e}')
+            return
+
+        tenant = req.tenant
+        cfg = _cfg()
+        mgmt_user = cfg.get('mgmt_user', 'realm_admin')
+        mgmt_pass = cfg.get('mgmt_password', 'Adminpassword')
+
+        # ── Step 1: Login as realm_admin via CLI ──
+        yield sse_event('login', mgmt_user, 'running', f'Authenticating as {mgmt_user}...')
+        rc, out, err = ssh_exec(f'redcli user login {mgmt_user} -p {mgmt_pass}')
+        combined = out + err
+        if 'logged in' in combined.lower() or rc == 0:
+            yield sse_event('login', mgmt_user, 'success', f'Authenticated as {mgmt_user}')
+        else:
+            yield sse_event('login', mgmt_user, 'failed', combined[:100])
+            # continue anyway — CLI may already be logged in from a previous session
+
+        # ── Step 2: List and delete all services for this tenant ──
+        rc, out, err = ssh_exec(f'redcli service list -t {tenant} -o json')
+        services = []
+        try:
+            import json as _json
+            svc_data = _json.loads(out)
+            # Format: {"data": {"items": [...]}}
+            items = svc_data.get('data', {}).get('items', [])
+            for item in (items or []):
+                name = item.get('name', '')
+                scope = item.get('scope', '')  # e.g. "cluster-1/green/green-sub1/greenobj"
+                parts = scope.split('/')
+                # scope has 4 parts: cluster/tenant/subtenant/service
+                subtenant = parts[2] if len(parts) >= 4 else (parts[1] if len(parts) >= 3 else '')
+                if name:
+                    services.append({'name': name, 'subtenant': subtenant})
+        except Exception:
+            # Tabular fallback: parse │ greenobj │ green/green-sub1/greenobj │ ...
+            for line in (out + err).splitlines():
+                if '│' in line and tenant in line:
+                    cols = [c.strip() for c in line.split('│') if c.strip()]
+                    if len(cols) >= 2:
+                        scope_col = cols[1]  # e.g. "green/green-sub1/greenobj"
+                        parts = scope_col.split('/')
+                        sub = parts[1] if len(parts) >= 3 else ''
+                        services.append({'name': cols[0], 'subtenant': sub})
+
+        for svc in services:
+            svc_name = svc['name']
+            svc_sub = svc['subtenant']
+            yield sse_event('service-delete', svc_name, 'running', f'Deleting service "{svc_name}"...')
+            cmd = f'redcli service delete {svc_name} -t {tenant}'
+            if svc_sub:
+                cmd += f' -s {svc_sub}'
+            cmd += ' -f'
+            rc, out, err = ssh_exec(cmd)
+            combined = out + err
+            if rc == 0 or 'deleted' in combined.lower() or 'success' in combined.lower():
+                yield sse_event('service-delete', svc_name, 'success', f'Service "{svc_name}" deleted')
+            else:
+                yield sse_event('service-delete', svc_name, 'failed', combined.strip()[:120])
+            time.sleep(0.4)
+
+        # ── Step 3: List and delete all subtenants ──
+        rc, out, err = ssh_exec(f'redcli subtenant list -t {tenant} -o json')
         subtenants = []
-        if r.status_code == 200:
-            raw = r.json().get('data', [])
-            subtenants = [s.get('name', s) for s in raw] if isinstance(raw, list) else list(raw.keys())
+        try:
+            import json as _json
+            st_data = _json.loads(out)
+            # Format: {"data": [{name: "green-sub1", ...}]}  — data is a direct list
+            items = st_data.get('data', [])
+            if isinstance(items, dict):
+                items = items.get('items', [])
+            for item in (items or []):
+                name = item.get('name', '')
+                if name:
+                    subtenants.append(name)
+        except Exception:
+            # Tabular fallback
+            for line in (out + err).splitlines():
+                if '│' in line and line.strip().startswith('│'):
+                    cols = [c.strip() for c in line.split('│') if c.strip()]
+                    if cols and cols[0] not in ('NAME', 'name', 'ALLOCATED', 'USAGE'):
+                        subtenants.append(cols[0])
 
-        # For each subtenant: get users → delete users → delete subtenant
-        for st in reversed(subtenants):
-            ur = mgmt_get(f"/redapi/v1/clusters/{cluster}/users?tenants={req.tenant}")
-            user_ids = []
-            if ur.status_code == 200:
-                users_data = ur.json().get('data', {}).get('users', {})
-                user_ids = [v.get('user') for v in users_data.values()
-                            if isinstance(v, dict) and v.get('user') and v.get('user') != 'realm_admin']
-
-            for user in user_ids:
-                yield sse_event('user-delete', user, 'running', f'Deleting user "{user}"...')
-                dr = mgmt_delete(
-                    f"/redapi/v1/clusters/{cluster}/users/{user}",
-                    extra_headers={'tenant': req.tenant}
-                )
-                status = 'success' if dr.status_code in (200, 204) else 'failed'
-                yield sse_event('user-delete', user, status,
-                                f'User "{user}" deleted' if status == 'success' else dr.text[:100])
-                time.sleep(0.2)
-
+        for st in subtenants:
             yield sse_event('subtenant-delete', st, 'running', f'Deleting subtenant "{st}"...')
-            dr = mgmt_delete(
-                f"/redapi/v1/clusters/{cluster}/tenants/{req.tenant}/subtenants/{st}",
-                extra_headers={'tenant': req.tenant, 'subtenant': st}
-            )
-            status = 'success' if dr.status_code in (200, 204) else 'failed'
-            yield sse_event('subtenant-delete', st, status,
-                            f'Subtenant "{st}" deleted' if status == 'success' else dr.text[:100])
-            time.sleep(0.3)
+            rc, out, err = ssh_exec(f'redcli subtenant delete {st} -t {tenant} -f')
+            combined = out + err
+            if rc == 0 or 'deleted' in combined.lower() or 'success' in combined.lower():
+                yield sse_event('subtenant-delete', st, 'success', f'Subtenant "{st}" deleted')
+            else:
+                msg = combined.strip()[:120]
+                status = 'failed' if 'error' in msg.lower() else 'success'
+                yield sse_event('subtenant-delete', st, status,
+                                f'Subtenant "{st}" deleted' if status == 'success' else msg)
+            time.sleep(0.4)
 
-        # Finally delete the tenant
-        yield sse_event('tenant-delete', req.tenant, 'running', f'Deleting tenant "{req.tenant}"...')
-        dr = mgmt_delete(
-            f"/redapi/v1/clusters/{cluster}/tenants/{req.tenant}",
-            extra_headers={'tenant': req.tenant}
-        )
-        status = 'success' if dr.status_code in (200, 204) else 'failed'
-        yield sse_event('tenant-delete', req.tenant, status,
-                        f'Tenant "{req.tenant}" deleted' if status == 'success' else dr.text[:100])
-        yield sse_event('done', 'teardown', status,
-                        f'Teardown of "{req.tenant}" complete.' if status == 'success'
-                        else f'Teardown completed with errors.')
+        # ── Step 4: Delete the tenant ──
+        yield sse_event('tenant-delete', tenant, 'running', f'Deleting tenant "{tenant}"...')
+        rc, out, err = ssh_exec(f'redcli tenant delete {tenant} -f')
+        combined = out + err
+        if rc == 0 or 'deleted' in combined.lower() or 'success' in combined.lower():
+            yield sse_event('tenant-delete', tenant, 'success', f'Tenant "{tenant}" deleted successfully')
+            yield sse_event('done', 'teardown', 'success', f'Tenant "{tenant}" fully removed.')
+        else:
+            msg = combined.strip()[:200]
+            yield sse_event('tenant-delete', tenant, 'failed', msg)
+            yield sse_event('done', 'teardown', 'failed', 'Teardown completed with errors.')
+
+
 
     return StreamingResponse(_stream(), media_type="text/event-stream")
 

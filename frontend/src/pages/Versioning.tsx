@@ -3,7 +3,7 @@ import { toast } from 'react-hot-toast'
 import * as api from '../services/api'
 import { GitBranch, AlertTriangle, Download, Trash2 } from 'lucide-react'
 
-export default function Versioning() {
+export default function Versioning({ activeTenant }: { activeTenant?: string | null }) {
   const [buckets, setBuckets] = useState<any[]>([])
   const [selectedBucket, setSelectedBucket] = useState('')
   const [status, setStatus] = useState<string>('Unknown')
@@ -12,11 +12,13 @@ export default function Versioning() {
   const [loading, setLoading] = useState(false)
 
   useEffect(() => {
-    api.listBuckets().then(res => {
-      setBuckets(res.buckets || [])
-      if (res.buckets?.length > 0) setSelectedBucket(res.buckets[0].Name)
+    setBuckets([]); setSelectedBucket('')
+    api.listBuckets(activeTenant).then(res => {
+      const list = res.data.buckets || []
+      setBuckets(list)
+      if (list.length > 0) setSelectedBucket(list[0].Name)
     }).catch(err => toast.error('Failed to load buckets'))
-  }, [])
+  }, [activeTenant])
 
   useEffect(() => {
     if (selectedBucket) {

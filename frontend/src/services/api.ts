@@ -8,24 +8,24 @@ export const saveConfig = (data: any) => api.post('/config', data)
 export const testConnection = () => api.post('/config/test')
 
 // Buckets
-export const listBuckets = () => api.get('/buckets')
-export const createBucket = (data: { name: string; enable_versioning?: boolean; enable_object_lock?: boolean }) => api.post('/buckets', data)
-export const deleteBucket = (name: string) => api.delete(`/buckets/${name}`)
-export const getBucketTags = (name: string) => api.get(`/buckets/${name}/tags`)
-export const getBucketAcl = (name: string) => api.get(`/buckets/${name}/acl`)
+export const listBuckets = (tenant?: string | null) => api.get('/buckets', { params: tenant ? { tenant } : {} })
+export const createBucket = (data: { name: string; enable_versioning?: boolean; enable_object_lock?: boolean }, tenant?: string | null) => api.post('/buckets', data, { params: tenant ? { tenant } : {} })
+export const deleteBucket = (name: string, tenant?: string | null) => api.delete(`/buckets/${name}`, { params: tenant ? { tenant } : {} })
+export const getBucketTags = (name: string, tenant?: string | null) => api.get(`/buckets/${name}/tags`, { params: tenant ? { tenant } : {} })
+export const getBucketAcl = (name: string, tenant?: string | null) => api.get(`/buckets/${name}/acl`, { params: tenant ? { tenant } : {} })
 
 // Objects
-export const listObjects = (bucket: string, prefix = '') => api.get(`/buckets/${bucket}/objects`, { params: { prefix } })
-export const uploadObject = (bucket: string, file: File, key?: string) => {
+export const listObjects = (bucket: string, prefix = '', tenant?: string | null) => api.get(`/buckets/${bucket}/objects`, { params: { prefix, ...(tenant ? { tenant } : {}) } })
+export const uploadObject = (bucket: string, file: File, key?: string, tenant?: string | null) => {
   const form = new FormData()
   form.append('file', file)
   if (key) form.append('key', key)
-  return api.post(`/buckets/${bucket}/objects`, form, { timeout: 300000 })
+  return api.post(`/buckets/${bucket}/objects`, form, { timeout: 300000, params: tenant ? { tenant } : {} })
 }
-export const deleteObject = (bucket: string, key: string) => api.delete(`/buckets/${bucket}/objects/${encodeURIComponent(key)}`)
-export const headObject = (bucket: string, key: string) => api.get(`/buckets/${bucket}/objects/${encodeURIComponent(key)}/meta`)
-export const downloadObject = (bucket: string, key: string) => `/api/buckets/${bucket}/objects/${encodeURIComponent(key)}/download`
-export const batchDelete = (bucket: string, keys: string[]) => api.post(`/buckets/${bucket}/batch-delete`, { keys })
+export const deleteObject = (bucket: string, key: string, tenant?: string | null, versionId?: string, bypassGovernance?: boolean) => api.delete(`/buckets/${bucket}/objects/${encodeURIComponent(key)}`, { params: { ...(tenant ? { tenant } : {}), ...(versionId ? { version_id: versionId } : {}), ...(bypassGovernance ? { bypass_governance: true } : {}) } })
+export const headObject = (bucket: string, key: string, tenant?: string | null) => api.get(`/buckets/${bucket}/objects/${encodeURIComponent(key)}/meta`, { params: tenant ? { tenant } : {} })
+export const downloadObject = (bucket: string, key: string, tenant?: string | null) => `/api/buckets/${bucket}/objects/${encodeURIComponent(key)}/download${tenant ? `?tenant=${tenant}` : ''}`
+export const batchDelete = (bucket: string, keys: string[], tenant?: string | null) => api.post(`/buckets/${bucket}/batch-delete`, { keys }, { params: tenant ? { tenant } : {} })
 export const getObjectTags = (bucket: string, key: string) => api.get(`/buckets/${bucket}/objects/${encodeURIComponent(key)}/tags`)
 export const putObjectTags = (bucket: string, key: string, tags: any[]) => api.put(`/buckets/${bucket}/objects/${encodeURIComponent(key)}/tags`, { tags })
 

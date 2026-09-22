@@ -8,50 +8,54 @@ import TenantSwitcher from './components/TenantSwitcher'
 
 // S3 Data Plane pages (existing)
 import Configuration from './pages/Configuration'
-import SystemHealth from './pages/SystemHealth'
+
 import BucketManager from './pages/BucketManager'
 import ObjectExplorer from './pages/ObjectExplorer'
-import Versioning from './pages/Versioning'
+
 import ObjectLock from './pages/ObjectLock'
-import LegalHold from './pages/LegalHold'
+
 import MultipartUpload from './pages/MultipartUpload'
 import PresignedURL from './pages/PresignedURL'
 import Lifecycle from './pages/Lifecycle'
 import CorsPolicy from './pages/CorsPolicy'
 import Benchmark from './pages/Benchmark'
-import Analytics from './pages/Analytics'
+import Details from './pages/Details'
 
 // Admin / Management Plane pages (lazy loaded)
-const AdminDashboard   = lazy(() => import('./pages/admin/AdminDashboard'))
-const TenantManager    = lazy(() => import('./pages/admin/TenantManager'))
-const UserManager      = lazy(() => import('./pages/admin/UserManager'))
-const S3AccessManager  = lazy(() => import('./pages/admin/S3AccessManager'))
-const Infrastructure   = lazy(() => import('./pages/admin/Infrastructure'))
-const ProvisionWizard  = lazy(() => import('./pages/admin/ProvisionWizard'))
-const TeardownWizard   = lazy(() => import('./pages/admin/TeardownWizard'))
-const CSVImport        = lazy(() => import('./pages/admin/CSVImport'))
+const AdminDashboard      = lazy(() => import('./pages/admin/AdminDashboard'))
+const TenantManager       = lazy(() => import('./pages/admin/TenantManager'))
+const UserManager         = lazy(() => import('./pages/admin/UserManager'))
+const S3AccessManager     = lazy(() => import('./pages/admin/S3AccessManager'))
+
+const ConnectionSettings  = lazy(() => import('./pages/admin/ConnectionSettings'))
+const ProvisionWizard     = lazy(() => import('./pages/admin/ProvisionWizard'))
+const TeardownWizard      = lazy(() => import('./pages/admin/TeardownWizard'))
+const CSVImport           = lazy(() => import('./pages/admin/CSVImport'))
 
 // ── Tab definitions ──────────────────────────────────────────────
 const TABS = [
   // Admin (Management Plane)
-  { id: 'admin-dashboard',   label: 'Admin Dashboard',   icon: 'LayoutDashboard', group: 'admin' },
-  { id: 'admin-tenants',     label: 'Tenant Manager',    icon: 'Building2',       group: 'admin' },
-  { id: 'admin-users',       label: 'User Manager',      icon: 'Users',           group: 'admin' },
-  { id: 'admin-s3access',    label: 'S3 Access',         icon: 'Key',             group: 'admin' },
-  { id: 'admin-infra',       label: 'Infrastructure',    icon: 'Server',          group: 'admin' },
-  { id: 'admin-wizard',      label: 'Provision Wizard',  icon: 'Wand2',           group: 'admin' },
-  { id: 'admin-teardown',    label: 'Teardown Wizard',   icon: 'Trash2',          group: 'admin' },
-  { id: 'admin-import',      label: 'CSV / YAML Import', icon: 'FileUp',          group: 'admin' },
+  { id: 'admin-connections', label: 'Connection Settings',  icon: 'Cable',           group: 'admin' },
+  { id: 'admin-dashboard',   label: 'Admin Dashboard',      icon: 'LayoutDashboard', group: 'admin' },
+  { id: 'admin-tenants',     label: 'Tenant Manager',       icon: 'Building2',       group: 'admin' },
+  { id: 'admin-users',       label: 'User Manager',         icon: 'Users',           group: 'admin' },
+  { id: 'admin-s3access',    label: 'S3 Access',            icon: 'Key',             group: 'admin' },
+
+  { id: 'admin-wizard',      label: 'Provision Wizard',     icon: 'Wand2',           group: 'admin' },
+  { id: 'admin-teardown',    label: 'Teardown Wizard',      icon: 'Trash2',          group: 'admin' },
+  { id: 'admin-import',      label: 'CSV / YAML Import',    icon: 'FileUp',          group: 'admin' },
+  { id: 'details',           label: 'Technical Details',    icon: 'FileText',        group: 'admin' },
+
   // Setup (S3 Data Plane)
   { id: 'config',            label: 'S3 Configuration',  icon: 'Settings',        group: 'setup' },
-  { id: 'health',            label: 'System Health',     icon: 'Activity',        group: 'setup' },
+
   // Storage
   { id: 'buckets',           label: 'Bucket Manager',    icon: 'Database',        group: 'storage' },
   { id: 'objects',           label: 'Object Explorer',   icon: 'Box',             group: 'storage' },
   // Compliance
-  { id: 'versioning',        label: 'Versioning',        icon: 'GitBranch',       group: 'compliance' },
+
   { id: 'object-lock',       label: 'Object Lock / WORM',icon: 'Lock',            group: 'compliance' },
-  { id: 'legal-hold',        label: 'Legal Hold',        icon: 'Shield',          group: 'compliance' },
+
   // Advanced
   { id: 'multipart',         label: 'Multipart Upload',  icon: 'UploadCloud',     group: 'advanced' },
   { id: 'presigned',         label: 'Presigned URLs',    icon: 'Link',            group: 'advanced' },
@@ -59,7 +63,7 @@ const TABS = [
   { id: 'cors',              label: 'CORS & Policy',     icon: 'Globe',           group: 'advanced' },
   // Performance
   { id: 'benchmark',         label: 'Performance',       icon: 'BarChart2',       group: 'perf' },
-  { id: 'analytics',         label: 'Analytics',         icon: 'PieChart',        group: 'perf' },
+
 ]
 
 const NAV_GROUPS = [
@@ -93,28 +97,31 @@ export default function App() {
   const renderPage = () => {
     switch (activeTab) {
       // Admin (Management Plane — no tenant prop needed)
-      case 'admin-dashboard':  return <AdminDashboard onNavigate={setActiveTab} />
-      case 'admin-tenants':    return <TenantManager onNavigate={setActiveTab} />
-      case 'admin-users':      return <UserManager onNavigate={setActiveTab} />
-      case 'admin-s3access':   return <S3AccessManager onNavigate={setActiveTab} />
-      case 'admin-infra':      return <Infrastructure onNavigate={setActiveTab} />
-      case 'admin-wizard':     return <ProvisionWizard onNavigate={setActiveTab} />
-      case 'admin-teardown':   return <TeardownWizard onNavigate={setActiveTab} />
-      case 'admin-import':     return <CSVImport onNavigate={setActiveTab} />
+      case 'admin-dashboard':    return <AdminDashboard onNavigate={setActiveTab} />
+      case 'admin-tenants':      return <TenantManager onNavigate={setActiveTab} />
+      case 'admin-users':        return <UserManager onNavigate={setActiveTab} />
+      case 'admin-s3access':     return <S3AccessManager onNavigate={setActiveTab} />
+
+      case 'admin-connections':  return <ConnectionSettings />
+      case 'admin-wizard':       return <ProvisionWizard onNavigate={setActiveTab} />
+      case 'admin-teardown':     return <TeardownWizard onNavigate={setActiveTab} />
+      case 'admin-import':       return <CSVImport onNavigate={setActiveTab} />
+
       // S3 Data Plane — all receive activeTenant
       case 'config':           return <Configuration />
-      case 'health':           return <SystemHealth {...s3Props} />
+
       case 'buckets':          return <BucketManager {...s3Props} />
       case 'objects':          return <ObjectExplorer {...s3Props} />
-      case 'versioning':       return <Versioning {...s3Props} />
+
       case 'object-lock':      return <ObjectLock {...s3Props} />
-      case 'legal-hold':       return <LegalHold {...s3Props} />
+
       case 'multipart':        return <MultipartUpload {...s3Props} />
       case 'presigned':        return <PresignedURL {...s3Props} />
       case 'lifecycle':        return <Lifecycle {...s3Props} />
       case 'cors':             return <CorsPolicy {...s3Props} />
       case 'benchmark':        return <Benchmark {...s3Props} />
-      case 'analytics':        return <Analytics {...s3Props} />
+      case 'details':          return <Details />
+
       default:                 return <AdminDashboard onNavigate={setActiveTab} />
     }
   }
@@ -129,19 +136,17 @@ export default function App() {
             const first = TABS.find(t => t.group === g)
             if (first) setActiveTab(first.id)
           }}
+          tenantSlot={S3_GROUPS.has(activeGroup) ? (
+            <TenantSwitcher
+              variant="header"
+              activeTenant={activeTenant}
+              onTenantChange={setActiveTenant}
+            />
+          ) : undefined}
         />
 
         <div style={{ display: 'flex', maxWidth: 1400, margin: '0 auto', padding: 'calc(var(--nav-height, 60px) + 24px) 24px 32px' }}>
           <div style={{ display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
-            {/* Tenant switcher — only in S3 sections */}
-            {S3_GROUPS.has(activeGroup) && (
-              <div style={{ width: 240, marginBottom: 0 }}>
-                <TenantSwitcher
-                  activeTenant={activeTenant}
-                  onTenantChange={setActiveTenant}
-                />
-              </div>
-            )}
             <DemoSidebar tabs={TABS} activeTab={activeTab} onTabChange={setActiveTab} />
           </div>
           <main style={{ flex: 1, minWidth: 0, marginLeft: 24 }}>

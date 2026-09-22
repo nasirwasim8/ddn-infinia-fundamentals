@@ -4,7 +4,7 @@ import * as api from '../services/api'
 import { Play, Activity, Clock, Zap } from 'lucide-react'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
 
-export default function Benchmark() {
+export default function Benchmark({ activeTenant }: { activeTenant?: string | null }) {
   const [buckets, setBuckets] = useState<any[]>([])
   const [bucket, setBucket] = useState('')
   const [size, setSize] = useState('1MB')
@@ -17,11 +17,13 @@ export default function Benchmark() {
   const [history, setHistory] = useState<any[]>([])
 
   useEffect(() => {
-    api.listBuckets().then(res => {
-      setBuckets(res.buckets || [])
-      if (res.buckets?.length > 0) setBucket(res.buckets[0].Name)
+    setBuckets([]); setBucket('')
+    api.listBuckets(activeTenant).then(res => {
+      const list = res.data.buckets || []
+      setBuckets(list)
+      if (list.length > 0) setBucket(list[0].Name)
     })
-  }, [])
+  }, [activeTenant])
 
   const runBenchmark = async () => {
     if (!bucket) return

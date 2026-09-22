@@ -3,12 +3,17 @@ import toast from 'react-hot-toast'
 import { Plus, Trash2, Edit2, X, Check } from 'lucide-react'
 import { listUsers, createUser, deleteUser, listTenants } from '../../services/adminApi'
 
-const SCOPE_EXAMPLES = [
-  { scope: 'red:admin', label: 'Tenant Admin' },
-  { scope: 'red/red:service-user', label: 'Subtenant Service User' },
-  { scope: '[realm]:admin', label: 'Realm Admin' },
-  { scope: 'red/red/redobj:service-user', label: 'Service-level User' },
-]
+// Scope presets generated dynamically from the entered tenant name
+function scopePresets(tenant: string, subtenant?: string) {
+  const t = tenant || 'tenant'
+  const s = subtenant || t
+  return [
+    { scope: `${t}:admin`,                   label: 'Tenant Admin' },
+    { scope: `${t}/${s}:service-user`,        label: 'Subtenant User' },
+    { scope: `${t}/${s}/redobj:service-user`, label: 'Service-level User' },
+    { scope: '[realm]:admin',                 label: 'Realm Admin' },
+  ]
+}
 
 const SCOPE_COLORS: Record<string, string> = {
   'admin': '#ED2738', 'service-user': '#0EA5E9', 'viewer': '#F59E0B', 'realm': '#8B5CF6'
@@ -78,33 +83,60 @@ export default function UserManager({ onNavigate }: { onNavigate?: (tab: string)
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
             <tr style={{ background: 'var(--surface-hover)', fontSize: 12, color: 'var(--text-muted)', textTransform: 'uppercase' }}>
-              {['Username', 'Tenant', 'Scope / Caps', 'Email', 'Actions'].map(h => (
+              {['Username', 'Tenant', 'Type', 'Scope / S3 Key', 'Actions'].map(h => (
                 <th key={h} style={{ padding: '11px 18px', textAlign: 'left', fontWeight: 600 }}>{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={5} style={{ padding: '40px', textAlign: 'center', color: 'var(--text-muted)' }}>Loading…</td></tr>
+              <tr><td colSpan={5} style={{ padding: '40px', textAlign: 'center', color: 'var(--text-muted)' }}>Loading users (including SSH tenant lookup)…</td></tr>
             ) : users.length === 0 ? (
               <tr><td colSpan={5} style={{ padding: '40px', textAlign: 'center', color: 'var(--text-muted)' }}>No users found</td></tr>
-            ) : users.map((u, i) => (
-              <tr key={`${u.username}-${i}`} style={{ borderTop: '1px solid var(--border-subtle)', fontSize: 14 }}>
-                <td style={{ padding: '13px 18px', fontWeight: 500, fontFamily: 'var(--font-mono)', fontSize: 13 }}>{u.username}</td>
-                <td style={{ padding: '13px 18px', color: 'var(--text-muted)', fontSize: 13 }}>{u.tenant}</td>
-                <td style={{ padding: '13px 18px' }}>
-                  {u.caps ? (
-                    <span style={{ background: `${scopeColor(u.caps)}20`, color: scopeColor(u.caps), padding: '3px 8px', borderRadius: 5, fontSize: 12, fontFamily: 'var(--font-mono)' }}>{u.caps}</span>
-                  ) : <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>—</span>}
-                </td>
-                <td style={{ padding: '13px 18px', color: 'var(--text-muted)', fontSize: 13 }}>{u.email || '—'}</td>
-                <td style={{ padding: '13px 18px' }}>
-                  <button onClick={() => doDelete(u.username, u.tenant)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 4 }} title="Delete user">
-                    <Trash2 size={15} />
-                  </button>
-                </td>
-              </tr>
-            ))}
+            ) : users.map((u, i) => {
+              const isS3Tenant = u.source === 's3-tenant'
+              const typeBg    = isS3Tenant ? '#0EA5E920' : '#8B5CF620'
+              const typeColor = isS3Tenant ? '#0EA5E9'   : '#8B5CF6'
+              return (
+                <tr key={`${u.username}-${i}`} style={{ borderTop: '1px solid var(--border-subtle)', fontSize: 14 }}>
+                  {/* Username */}
+                  <td style={{ padding: '13px 18px', fontWeight: 500, fontFamily: 'var(--font-mono)', fontSize: 13 }}>{u.username}</td>
+                  {/* Tenant */}
+                  <td style={{ padding: '13px 18px', color: 'var(--text-muted)', fontSize: 13 }}>{u.tenant}</td>
+                  {/* Type badge */}
+                  <td style={{ padding: '13px 18px' }}>
+                    <span style={{ background: typeBg, color: typeColor, padding: '3px 9px', borderRadius: 5, fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap' }}>
+                      {isS3Tenant ? '🔑 S3 Tenant User' : '👤 Realm User'}
+                    </span>
+                  </td>
+                  {/* Scope or S3 Key */}
+                  <td style={{ padding: '13px 18px' }}>
+                    {isS3Tenant ? (
+                      <div>
+                        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)' }}>
+                          key: <span style={{ color: 'var(--text-primary)' }}>{u.s3_key || '—'}</span>
+                        </div>
+                        {u.s3_expiry && (
+                          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
+                            expires: {u.s3_expiry?.split(' ')[0]}
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      u.caps
+                        ? <span style={{ background: `${scopeColor(u.caps)}20`, color: scopeColor(u.caps), padding: '3px 8px', borderRadius: 5, fontSize: 12, fontFamily: 'var(--font-mono)' }}>{u.caps}</span>
+                        : <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>—</span>
+                    )}
+                  </td>
+                  {/* Actions */}
+                  <td style={{ padding: '13px 18px' }}>
+                    <button onClick={() => doDelete(u.username, u.tenant)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 4 }} title="Delete user">
+                      <Trash2 size={15} />
+                    </button>
+                  </td>
+                </tr>
+              )
+            })}
           </tbody>
         </table>
       </div>
@@ -130,11 +162,13 @@ export default function UserManager({ onNavigate }: { onNavigate?: (tab: string)
             </div>
             <label style={{ display: 'block', fontSize: 12, fontWeight: 500, marginBottom: 4 }}>Scope / Caps</label>
             <input value={form.caps} onChange={e => setForm(f => ({ ...f, caps: e.target.value }))}
-              placeholder="e.g. red/red:service-user" style={{ ...inp, marginBottom: 8 }} />
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 18 }}>
-              {SCOPE_EXAMPLES.map(s => (
+              placeholder={form.tenant ? `e.g. ${form.tenant}:admin` : 'e.g. yellow:admin'}
+              style={{ ...inp, marginBottom: 8 }} />
+            {/* Dynamic presets — update as tenant/subtenant are typed */}
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 6 }}>
+              {scopePresets(form.tenant, form.subtenant).map(s => (
                 <button key={s.scope} onClick={() => setForm(f => ({ ...f, caps: s.scope }))}
-                  style={{ padding: '3px 10px', background: form.caps === s.scope ? '#ED273820' : 'var(--surface-hover)', border: `1px solid ${form.caps === s.scope ? '#ED2738' : 'var(--border-subtle)'}`, borderRadius: 5, cursor: 'pointer', fontSize: 11, color: 'var(--text-muted)' }}>
+                  style={{ padding: '3px 10px', background: form.caps === s.scope ? '#ED273820' : 'var(--surface-hover)', border: `1px solid ${form.caps === s.scope ? '#ED2738' : 'var(--border-subtle)'}`, borderRadius: 5, cursor: 'pointer', fontSize: 11, color: form.caps === s.scope ? '#ED2738' : 'var(--text-muted)' }}>
                   {s.label}
                 </button>
               ))}

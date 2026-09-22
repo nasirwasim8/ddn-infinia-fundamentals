@@ -67,41 +67,99 @@ def _extract_tenant_from_caps(caps: str) -> str:
 @router.get("/users")
 def list_users(tenant: Optional[str] = Query(None)):
     """
-    List users from the realm-level /redapi/v1/user endpoint.
-    All Infinia users live at realm scope. Tenant is derived from their caps.
+    List users from both:
+      1. Realm store  — GET /redapi/v1/user  (realm_admin, tenant admins)
+      2. S3 tenant store — redcli s3 access list -t <tenant>  (users from Provision/S3 Access wizards)
+    Results are merged and tagged with source='realm' or source='s3-tenant'.
     """
-    r = mgmt_get("/redapi/v1/user")
-    if r.status_code != 200:
-        raise HTTPException(status_code=r.status_code, detail=r.text)
-
-    raw = r.json().get('data', {})
     all_users = []
+    seen = set()   # (username, tenant) pairs to avoid duplicates
 
-    if isinstance(raw, dict):
-        for key, info in raw.items():
-            if not isinstance(info, dict):
-                continue
-            username = info.get('user', '')
-            if not username or username == 'realm_admin':
-                continue
+    # ── 1. Realm users from REST API ──
+    try:
+        r = mgmt_get("/redapi/v1/user")
+        if r.status_code == 200:
+            raw = r.json().get('data', {})
+            if isinstance(raw, dict):
+                for key, info in raw.items():
+                    if not isinstance(info, dict):
+                        continue
+                    username = info.get('user', '')
+                    if not username or username == 'realm_admin':
+                        continue
+                    caps = info.get('caps', '')
+                    user_tenant = _extract_tenant_from_caps(caps)
+                    if tenant and tenant.lower() not in ('all', ''):
+                        if user_tenant != tenant:
+                            continue
+                    seen.add((username, user_tenant))
+                    all_users.append({
+                        "username":   username,
+                        "tenant":     user_tenant,
+                        "email":      info.get('email', ''),
+                        "caps":       caps,
+                        "full_name":  info.get('name', ''),
+                        "id":         info.get('id', ''),
+                        "source":     "realm",
+                        "type":       "Realm User",
+                    })
+    except Exception:
+        pass   # continue to redcli even if REST API fails
 
-            # Always derive tenant from caps — the tenant field from API is always "[realm]"
-            caps = info.get('caps', '')
-            user_tenant = _extract_tenant_from_caps(caps)
+    # ── 2. S3 tenant users from redcli s3 access list ──
+    try:
+        from app.ssh_helper import redcli_s3_access_list
+        from app.config_mgmt import mgmt_get as _mgmt_get
 
-            # Filter by tenant if requested
-            if tenant and tenant.lower() not in ('all', ''):
-                if user_tenant != tenant:
-                    continue
+        # Determine which tenants to query
+        if tenant and tenant.lower() not in ('all', ''):
+            tenant_names = [tenant]
+        else:
+            cluster = _get_cluster()
+            tr = mgmt_get(f"/redapi/v1/clusters/{cluster}/tenants")
+            if tr.status_code == 200:
+                td = tr.json().get('data', [])
+                # data is a list of {name, id, ...} objects
+                if isinstance(td, list):
+                    tenant_names = [t['name'] for t in td if t.get('name')]
+                elif isinstance(td, dict):
+                    tenant_names = list(td.keys())
+                else:
+                    tenant_names = []
+            else:
+                tenant_names = []
 
-            all_users.append({
-                "username": username,
-                "tenant": user_tenant,
-                "email": info.get('email', ''),
-                "caps": caps,
-                "full_name": info.get('name', ''),
-                "id": info.get('id', ''),
-            })
+        for t_name in tenant_names:
+            try:
+                records = redcli_s3_access_list(t_name)
+                for rec in records:
+                    uname = rec.get('user_name', rec.get('username', ''))
+                    if not uname:
+                        continue
+                    if (uname, t_name) in seen:
+                        # Realm user already listed — enrich with S3 key info
+                        for u in all_users:
+                            if u['username'] == uname and u['tenant'] == t_name:
+                                u['s3_key']    = rec.get('s3_key', '')
+                                u['s3_expiry'] = rec.get('expiration', '')
+                        continue
+                    seen.add((uname, t_name))
+                    all_users.append({
+                        "username":   uname,
+                        "tenant":     t_name,
+                        "email":      "",
+                        "caps":       f"{t_name}:s3-access",
+                        "full_name":  "",
+                        "id":         "",
+                        "source":     "s3-tenant",
+                        "type":       "S3 Tenant User",
+                        "s3_key":     rec.get('s3_key', ''),
+                        "s3_expiry":  rec.get('expiration', ''),
+                    })
+            except Exception:
+                continue   # skip tenant on error, show what we have
+    except Exception:
+        pass   # SSH helper not available — show realm users only
 
     all_users.sort(key=lambda u: (u['tenant'], u['username']))
     return {"users": all_users, "total": len(all_users)}
@@ -109,22 +167,39 @@ def list_users(tenant: Optional[str] = Query(None)):
 
 @router.post("/users")
 def create_user(req: CreateUserRequest):
-    # Correct endpoint: POST /redapi/v1/user with User_id, caps, Password as headers
-    caps = req.caps or f"{req.tenant}:service-user"
-    extra = {
-        'User_id': req.username,
-        'Password': req.password or 'DDN@Infinia2024!',
-        'caps': caps,
-    }
-    if req.email:
-        extra['email'] = req.email
-    if req.full_name:
-        extra['name'] = req.full_name
+    cluster = _get_cluster()
+    caps = req.caps or f"{req.tenant}:admin"
 
-    r = mgmt_post("/redapi/v1/user", extra_headers=extra)
+    # Step 1: Create user at realm level with caps + password
+    # POST /redapi/v1/user  with User_id, Password, caps as headers
+    r = mgmt_post(
+        "/redapi/v1/user",
+        extra_headers={
+            'User_id':  req.username,
+            'Password': req.password or 'DDN@Infinia2024!',
+            'caps':     caps,
+        }
+    )
     if r.status_code not in (200, 201):
-        raise HTTPException(status_code=r.status_code, detail=r.text)
-    return {"status": "success", "username": req.username, "tenant": req.tenant}
+        if 'already exists' in r.text.lower() or r.status_code == 409:
+            pass  # user exists — continue to grant step
+        else:
+            raise HTTPException(status_code=r.status_code, detail=r.text)
+
+    # Step 2: Grant tenant-level caps via PUT /redapi/v1/user/grant
+    # This makes the user visible in tenant S3 access checks
+    # Grant both "tenant" and "tenant/subtenant" levels (matching quick-red pattern)
+    for grant_caps in [req.tenant, f"{req.tenant}/{req.tenant}"]:
+        mgmt_put(
+            "/redapi/v1/user/grant",
+            payload={},
+            extra_headers={
+                'user_id': req.username,
+                'caps':    grant_caps,
+            }
+        )
+
+    return {"status": "success", "username": req.username, "tenant": req.tenant, "caps": caps}
 
 
 @router.put("/users/{username}")
