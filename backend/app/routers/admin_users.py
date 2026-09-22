@@ -15,7 +15,7 @@ class CreateUserRequest(BaseModel):
     username: str
     tenant: str
     subtenant: Optional[str] = None
-    password: Optional[str] = 'DDN@Infinia2024!'
+    password: Optional[str] = None
     caps: Optional[str] = None     # e.g. "red:admin" or "red/red:service-user"
     email: Optional[str] = None
     full_name: Optional[str] = None

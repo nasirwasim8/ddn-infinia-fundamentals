@@ -195,12 +195,12 @@ export default function BucketManager({ activeTenant }: Props) {
       {showCLI && (
         <div style={{ background: '#0d1117', borderRadius: 10, border: '1px solid #30363d', overflow: 'hidden' }}>
           <div style={{ padding: '12px 18px', borderBottom: '1px solid #30363d', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ color: '#8b949e', fontSize: 13, fontFamily: 'var(--font-mono)' }}>nwasim@infinia-rtx:~$</span>
+            <span style={{ color: '#8b949e', fontSize: 13, fontFamily: 'var(--font-mono)' }}>user@infinia:~$</span>
             <span style={{ color: '#8b949e', fontSize: 12 }}>Run on the Infinia VM · tenant: <strong style={{ color: '#e6edf3' }}>{t}</strong></span>
           </div>
           <div style={{ padding: '16px 18px', display: 'flex', flexDirection: 'column', gap: 10 }}>
             {[
-              { label: 'Login (realm level)', cmd: 'redcli user login realm_admin -p Adminpassword' },
+              { label: 'Login (realm level)', cmd: 'redcli user login realm_admin -p <your-password>' },
               { label: 'Create a bucket (no Object Lock)', cmd: `redcli s3 bucket create <bucket-name> -t ${t} -s ${t === 'green' ? 'green-sub1' : s} -u ${u}` },
               { label: 'Create with Object Lock (WORM)', cmd: `redcli s3 bucket create <bucket-name> -t ${t} -s ${t === 'green' ? 'green-sub1' : s} -u ${u} --object-lock` },
               { label: 'List all buckets for this tenant', cmd: `redcli s3 bucket list -t ${t} -s ${t === 'green' ? 'green-sub1' : s} -u ${u}` },

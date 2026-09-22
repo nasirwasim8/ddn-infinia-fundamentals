@@ -92,7 +92,7 @@ def get_mgmt_client():
     cfg = load_config()
     return _httpx.Client(
         base_url=cfg.get('mgmt_endpoint', 'https://192.168.147.129:12023'),
-        auth=(cfg.get('mgmt_user', 'realm_admin'), cfg.get('mgmt_password', 'Adminpassword')),
+        auth=(cfg.get('mgmt_user', 'realm_admin'), cfg.get('mgmt_password', '')),
         verify=False,
         timeout=30
     )

@@ -12,7 +12,7 @@ router = APIRouter()
 class CreateTenantRequest(BaseModel):
     name: str
     admin_user: str
-    admin_password: Optional[str] = 'DDN@Infinia2024!'
+    admin_password: Optional[str] = None
     io_priority: Optional[str] = None
 
 

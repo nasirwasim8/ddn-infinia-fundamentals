@@ -11,7 +11,7 @@ def get_ssh_config() -> dict:
     cfg = load_config()
     return {
         'host':     cfg.get('ssh_host', cfg.get('mgmt_server', '192.168.147.129')),
-        'user':     cfg.get('ssh_user', 'nwasim'),
+        'user':     cfg.get('ssh_user', ''),
         'password': cfg.get('ssh_password', ''),
         'port':     int(cfg.get('ssh_port', 22)),
     }

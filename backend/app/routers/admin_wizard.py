@@ -259,7 +259,7 @@ def teardown(req: TeardownRequest):
         tenant = req.tenant
         cfg = _cfg()
         mgmt_user = cfg.get('mgmt_user', 'realm_admin')
-        mgmt_pass = cfg.get('mgmt_password', 'Adminpassword')
+        mgmt_pass = cfg.get('mgmt_password', '')
 
         # ── Step 1: Login as realm_admin via CLI ──
         yield sse_event('login', mgmt_user, 'running', f'Authenticating as {mgmt_user}...')
