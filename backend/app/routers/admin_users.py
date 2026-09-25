@@ -129,35 +129,41 @@ def list_users(tenant: Optional[str] = Query(None)):
             else:
                 tenant_names = []
 
-        for t_name in tenant_names:
-            try:
-                records = redcli_s3_access_list(t_name)
-                for rec in records:
-                    uname = rec.get('user_name', rec.get('username', ''))
-                    if not uname:
-                        continue
-                    if (uname, t_name) in seen:
-                        # Realm user already listed — enrich with S3 key info
-                        for u in all_users:
-                            if u['username'] == uname and u['tenant'] == t_name:
-                                u['s3_key']    = rec.get('s3_key', '')
-                                u['s3_expiry'] = rec.get('expiration', '')
-                        continue
-                    seen.add((uname, t_name))
-                    all_users.append({
-                        "username":   uname,
-                        "tenant":     t_name,
-                        "email":      "",
-                        "caps":       f"{t_name}:s3-access",
-                        "full_name":  "",
-                        "id":         "",
-                        "source":     "s3-tenant",
-                        "type":       "S3 Tenant User",
-                        "s3_key":     rec.get('s3_key', ''),
-                        "s3_expiry":  rec.get('expiration', ''),
-                    })
-            except Exception:
-                continue   # skip tenant on error, show what we have
+        # Query each tenant concurrently with a timeout so slow SSH never blocks the response
+        from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeout
+        def _query_tenant(t_name: str):
+            return t_name, redcli_s3_access_list(t_name)
+
+        with ThreadPoolExecutor(max_workers=5) as pool:
+            futs = {pool.submit(_query_tenant, t): t for t in tenant_names}
+            for fut in as_completed(futs, timeout=8):
+                try:
+                    t_name, records = fut.result(timeout=6)
+                    for rec in records:
+                        uname = rec.get('user_name', rec.get('username', ''))
+                        if not uname:
+                            continue
+                        if (uname, t_name) in seen:
+                            for u in all_users:
+                                if u['username'] == uname and u['tenant'] == t_name:
+                                    u['s3_key']    = rec.get('s3_key', '')
+                                    u['s3_expiry'] = rec.get('expiration', '')
+                            continue
+                        seen.add((uname, t_name))
+                        all_users.append({
+                            "username":   uname,
+                            "tenant":     t_name,
+                            "email":      "",
+                            "caps":       f"{t_name}:s3-access",
+                            "full_name":  "",
+                            "id":         "",
+                            "source":     "s3-tenant",
+                            "type":       "S3 Tenant User",
+                            "s3_key":     rec.get('s3_key', ''),
+                            "s3_expiry":  rec.get('expiration', ''),
+                        })
+                except Exception:
+                    continue   # skip any tenant that times out or errors
     except Exception:
         pass   # SSH helper not available — show realm users only
 

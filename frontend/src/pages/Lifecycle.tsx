@@ -3,7 +3,7 @@ import { toast } from 'react-hot-toast'
 import * as api from '../services/api'
 import { Trash2, Plus, Clock } from 'lucide-react'
 
-export default function Lifecycle() {
+export default function Lifecycle({ activeTenant }: { activeTenant?: string | null }) {
   const [buckets, setBuckets] = useState<any[]>([])
   const [selectedBucket, setSelectedBucket] = useState('')
   const [rules, setRules] = useState<any[]>([])
@@ -12,11 +12,13 @@ export default function Lifecycle() {
   const [newRule, setNewRule] = useState({ id: '', prefix: '', expireDays: 30, abortDays: 7, enabled: true })
 
   useEffect(() => {
-    api.listBuckets().then(res => {
-      setBuckets(res.buckets || [])
-      if (res.buckets?.length > 0) setSelectedBucket(res.buckets[0].Name)
-    })
-  }, [])
+    api.listBuckets(activeTenant ?? undefined).then(res => {
+      const list = res.data?.buckets || []
+      setBuckets(list)
+      if (list.length > 0) setSelectedBucket(list[0].Name)
+      else setSelectedBucket('')
+    }).catch(() => setBuckets([]))
+  }, [activeTenant])
 
   useEffect(() => {
     if (selectedBucket) loadRules()

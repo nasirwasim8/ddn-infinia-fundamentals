@@ -38,6 +38,12 @@ type Format = 'yaml' | 'csv'
 type Status = 'idle' | 'previewing' | 'provisioning' | 'done'
 interface SSEEvent { step: string; name: string; status: string; message: string; detail?: string }
 
+const STEP_COLORS: Record<string, string> = {
+  'tenant-create': '#ED2738', 'subtenant-create': '#6366F1', 'user-create': '#0EA5E9',
+  's3-user': '#F59E0B', 's3-access': '#F59E0B', 's3-service': '#10B981',
+  'hosts': '#8B5CF6', 'config': '#10B981', 'init': '#6366F1', 'done': '#00C280',
+}
+
 function StepIcon({ status }: { status: string }) {
   if (status === 'running') return <Loader size={15} color="#F59E0B" style={{ animation: 'spin 1s linear infinite', flexShrink: 0 }} />
   if (status === 'success') return <CheckCircle size={15} color="#00C280" style={{ flexShrink: 0 }} />
@@ -57,6 +63,17 @@ export default function CSVImport({ onNavigate }: { onNavigate?: (tab: string) =
   const [isDone, setIsDone] = useState(false)
   const [summary, setSummary] = useState('')
   const logRef = useRef<HTMLDivElement>(null)
+
+  // ── Full provision mode ──────────────────────────────────────────
+  const [fullProvision, setFullProvision] = useState(false)
+  const [s3Config, setS3Config] = useState({
+    s3_service_suffix: 'obj',
+    s3_vhost_template: 's3.{tenant}.infinia.io',
+    s3_admin_suffix: 'admin',
+    s3_expiry: '1y',
+  })
+  const setS3 = (k: string, v: string) => setS3Config(prev => ({ ...prev, [k]: v }))
+
 
   const downloadTemplate = (fmt: Format) => {
     const text = fmt === 'yaml' ? YAML_TEMPLATE : CSV_TEMPLATE
@@ -107,7 +124,11 @@ export default function CSVImport({ onNavigate }: { onNavigate?: (tab: string) =
       const res = await fetch('/api/admin/wizard/bulk-provision', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content, format }),
+        body: JSON.stringify({
+          content, format,
+          full_provision: fullProvision,
+          ...(fullProvision ? s3Config : {}),
+        }),
       })
       const reader = res.body!.getReader(); const dec = new TextDecoder()
       while (true) {
@@ -182,15 +203,69 @@ export default function CSVImport({ onNavigate }: { onNavigate?: (tab: string) =
           style={{ width: '100%', height: 220, padding: 14, borderRadius: 10, border: '1px solid var(--border-subtle)', background: '#0d1117', color: '#e6edf3', fontFamily: 'var(--font-mono)', fontSize: 12, lineHeight: 1.6, resize: 'vertical', boxSizing: 'border-box' }} />
       </div>
 
+      {/* ── Provision Mode Toggle ──────────────────────────────── */}
+      <div style={{ background: 'var(--surface-card)', border: `1px solid ${fullProvision ? '#10B98140' : 'var(--border-subtle)'}`, borderRadius: 12, padding: '16px 20px', transition: 'border-color 0.2s' }}>
+        {/* Toggle header */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer' }} onClick={() => setFullProvision(p => !p)}>
+          {/* custom toggle */}
+          <div style={{ width: 44, height: 24, borderRadius: 12, background: fullProvision ? '#10B981' : 'var(--surface-hover)', border: '1px solid var(--border-subtle)', position: 'relative', flexShrink: 0, transition: 'background 0.2s' }}>
+            <div style={{ position: 'absolute', top: 3, left: fullProvision ? 22 : 2, width: 16, height: 16, borderRadius: '50%', background: 'white', transition: 'left 0.2s', boxShadow: '0 1px 3px rgba(0,0,0,0.3)' }} />
+          </div>
+          <div>
+            <div style={{ fontWeight: 700, fontSize: 14, color: fullProvision ? '#10B981' : 'var(--text-primary)' }}>
+              Full End-to-End Provisioning
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
+              {fullProvision
+                ? 'Will also create S3 users, generate access keys, register S3 service, update DNS, and save credentials — same as Provision Wizard.'
+                : 'Currently: creates tenants, subtenants, and realm users only.'}
+            </div>
+          </div>
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, flexWrap: 'wrap' as const }}>
+            {(fullProvision
+              ? [['Tenant', '#ED2738'], ['Subtenant', '#6366F1'], ['User', '#0EA5E9'], ['S3 User', '#F59E0B'], ['S3 Keys', '#F59E0B'], ['S3 Service', '#10B981'], ['DNS', '#8B5CF6'], ['Credentials', '#10B981']]
+              : [['Tenant', '#ED2738'], ['Subtenant', '#6366F1'], ['User', '#0EA5E9']]
+            ).map(([label, color]) => (
+              <span key={label} style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase' as const, padding: '2px 7px', borderRadius: 4, background: (color as string) + '18', color: color as string, border: '1px solid ' + (color as string) + '40' }}>{label}</span>
+            ))}
+          </div>
+        </div>
+
+        {/* S3 config fields — only shown when full provision is on */}
+        {fullProvision && (
+          <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border-subtle)', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            {[
+              { label: 'S3 Service Name Suffix', key: 's3_service_suffix', ph: 'obj', hint: 'Service name = {tenant}{suffix}  e.g. redobj' },
+              { label: 'vHost Template', key: 's3_vhost_template', ph: 's3.{tenant}.infinia.io', hint: '{tenant} is replaced per tenant' },
+              { label: 'S3 Admin Username Suffix', key: 's3_admin_suffix', ph: 'admin', hint: 'Admin user = {tenant}-{suffix}  e.g. red-admin' },
+              { label: 'Key Expiry', key: 's3_expiry', ph: '1y', hint: '1y, 6m, 30d, never' },
+            ].map(f => (
+              <div key={f.key}>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 5 }}>{f.label}</label>
+                <input
+                  value={(s3Config as any)[f.key]}
+                  onChange={e => setS3(f.key, e.target.value)}
+                  placeholder={f.ph}
+                  style={{ width: '100%', padding: '8px 10px', borderRadius: 7, border: '1px solid var(--border-subtle)', background: 'var(--surface-primary)', color: 'var(--text-primary)', fontSize: 13, boxSizing: 'border-box' as const }}
+                />
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3 }}>{f.hint}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
       {/* Action buttons */}
       <div style={{ display: 'flex', gap: 12 }}>
         <button onClick={doPreview} disabled={isProvisioning || status === 'previewing'}
           style={{ flex: 1, padding: '11px 0', background: 'var(--surface-hover)', border: '1px solid var(--border-subtle)', borderRadius: 8, color: 'var(--text-primary)', fontWeight: 600, fontSize: 14, cursor: 'pointer', opacity: isProvisioning ? 0.5 : 1 }}>
-          {status === 'previewing' ? '⏳ Parsing…' : '🔍 Preview Plan'}
+          {status === 'previewing' ? 'Parsing…' : 'Preview Plan'}
         </button>
         <button onClick={doProvision} disabled={isProvisioning || !content.trim()}
-          style={{ flex: 2, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '11px 0', background: isProvisioning ? '#ED273880' : '#ED2738', border: 'none', borderRadius: 8, color: 'white', fontWeight: 700, fontSize: 15, cursor: isProvisioning ? 'not-allowed' : 'pointer' }}>
-          {isProvisioning ? <><Loader size={16} style={{ animation: 'spin 1s linear infinite' }} /> Provisioning…</> : <><Play size={16} /> Provision All Tenants</>}
+          style={{ flex: 2, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '11px 0', background: isProvisioning ? '#ED273880' : fullProvision ? '#10B981' : '#ED2738', border: 'none', borderRadius: 8, color: 'white', fontWeight: 700, fontSize: 15, cursor: isProvisioning ? 'not-allowed' : 'pointer' }}>
+          {isProvisioning
+            ? <><Loader size={16} style={{ animation: 'spin 1s linear infinite' }} /> Provisioning…</>
+            : <><Play size={16} /> {fullProvision ? 'Full Provision All Tenants' : 'Provision Tenants + Users'}</>}
         </button>
       </div>
 
@@ -235,30 +310,86 @@ export default function CSVImport({ onNavigate }: { onNavigate?: (tab: string) =
       {events.length > 0 && (
         <div>
           <h3 style={{ fontSize: 15, fontWeight: 600, margin: '0 0 12px 0' }}>
-            {isProvisioning ? '⏳ Provisioning in progress…' : isDone ? '✅ Provisioning complete' : 'Provision log'}
+            {isProvisioning ? 'Provisioning in progress…' : isDone ? 'Provisioning complete' : 'Provision log'}
           </h3>
-          <div ref={logRef} style={{ background: '#0d1117', border: '1px solid var(--border-subtle)', borderRadius: 12, padding: '14px 16px', maxHeight: 400, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 6 }}>
-            {events.map((ev, i) => (
-              <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, fontFamily: 'var(--font-mono)', fontSize: 12 }}>
-                <StepIcon status={ev.status} />
-                <div style={{ flex: 1 }}>
-                  <span style={{ color: ev.status === 'success' ? '#00C280' : ev.status === 'failed' ? '#ED2738' : ev.status === 'skipped' ? '#6366F1' : '#F59E0B' }}>
-                    {ev.message}
-                  </span>
-                  {ev.status === 'failed' && ev.detail && (
-                    <div style={{ fontSize: 11, color: '#EF444480', marginTop: 2 }}>{ev.detail.slice(0, 100)}</div>
-                  )}
+          <div ref={logRef} style={{ background: '#0d1117', border: '1px solid var(--border-subtle)', borderRadius: 12, padding: '14px 16px', maxHeight: 500, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 5 }}>
+            {events.map((ev, i) => {
+              const stepColor = STEP_COLORS[ev.step] || '#888'
+
+              // Parse S3 key detail (only present on s3-access success events)
+              let keyData: { tenant?: string; user?: string; s3_key?: string; s3_secret?: string } | null = null
+              if (ev.step === 's3-access' && ev.status === 'success' && ev.detail) {
+                try { keyData = JSON.parse(ev.detail) } catch {}
+              }
+
+              const copyField = (val: string) => navigator.clipboard.writeText(val).then(() => toast.success('Copied!'))
+
+              return (
+              <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {/* Log line */}
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, fontFamily: 'var(--font-mono)', fontSize: 12 }}>
+                  <StepIcon status={ev.status} />
+                  <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 4, background: stepColor + '20', color: stepColor, flexShrink: 0, marginTop: 1, textTransform: 'uppercase' as const }}>{ev.step}</span>
+                  <div style={{ flex: 1 }}>
+                    <span style={{ color: ev.status === 'success' ? '#00C280' : ev.status === 'failed' ? '#ED2738' : ev.status === 'skipped' ? '#6366F1' : '#F59E0B' }}>
+                      {ev.message}
+                    </span>
+                    {ev.status === 'failed' && ev.detail && !keyData && (
+                      <div style={{ fontSize: 11, color: '#EF444480', marginTop: 2 }}>{ev.detail.slice(0, 120)}</div>
+                    )}
+                  </div>
                 </div>
+
+                {/* S3 Key card — only on s3-access success with key data */}
+                {keyData?.s3_key && (
+                  <div style={{ marginLeft: 48, background: '#161b22', border: '1px solid #F59E0B40', borderRadius: 8, padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 2 }}>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: '#F59E0B', textTransform: 'uppercase' as const, letterSpacing: '0.05em' }}>
+                        S3 Credentials — {keyData.tenant} / {keyData.user}
+                      </span>
+                      <button
+                        onClick={() => copyField(`S3_KEY=${keyData!.s3_key}\nS3_SECRET=${keyData!.s3_secret}`)}
+                        style={{ fontSize: 10, padding: '3px 8px', background: '#F59E0B20', border: '1px solid #F59E0B40', borderRadius: 4, color: '#F59E0B', cursor: 'pointer', fontWeight: 600 }}>
+                        Copy All
+                      </button>
+                    </div>
+                    {[
+                      { label: 'Access Key', value: keyData.s3_key! },
+                      { label: 'Secret Key', value: keyData.s3_secret!, mask: true },
+                    ].map(({ label, value, mask }) => (
+                      <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span style={{ fontSize: 10, color: '#8b949e', width: 80, flexShrink: 0 }}>{label}</span>
+                        <code style={{ flex: 1, fontSize: 11, color: '#e6edf3', background: '#0d1117', padding: '3px 8px', borderRadius: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const, fontFamily: 'var(--font-mono)' }}>
+                          {mask ? value.slice(0, 6) + '••••••••••••••••••••••••••••••••••' + value.slice(-4) : value}
+                        </code>
+                        <button
+                          onClick={() => copyField(value)}
+                          style={{ fontSize: 10, padding: '3px 8px', background: 'var(--surface-hover)', border: '1px solid var(--border-subtle)', borderRadius: 4, color: 'var(--text-muted)', cursor: 'pointer', flexShrink: 0 }}>
+                          Copy
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
-            ))}
+              )
+            })}
           </div>
           {isDone && summary && (
-            <div style={{ marginTop: 12, padding: '14px 18px', background: summary.includes('0 errors') ? '#00C28015' : '#ED273815', border: `1px solid ${summary.includes('0 errors') ? '#00C28040' : '#ED273840'}`, borderRadius: 10 }}>
-              <div style={{ fontWeight: 600, color: summary.includes('0 errors') ? '#00C280' : '#ED2738', marginBottom: 8 }}>{summary}</div>
-              <button onClick={() => onNavigate?.('admin-tenants')}
-                style={{ padding: '8px 16px', background: '#00C280', border: 'none', borderRadius: 7, color: 'white', fontWeight: 600, cursor: 'pointer', fontSize: 13 }}>
-                View Tenants →
-              </button>
+            <div style={{ marginTop: 12, padding: '14px 18px', background: summary.includes('errors') && !summary.includes('0 errors') ? '#ED273815' : '#00C28015', border: `1px solid ${summary.includes('errors') && !summary.includes('0 errors') ? '#ED273840' : '#00C28040'}`, borderRadius: 10 }}>
+              <div style={{ fontWeight: 600, color: summary.includes('errors') && !summary.includes('0 errors') ? '#ED2738' : '#00C280', marginBottom: 10 }}>{summary}</div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button onClick={() => onNavigate?.('admin-tenants')}
+                  style={{ padding: '8px 16px', background: 'var(--surface-hover)', border: '1px solid var(--border-subtle)', borderRadius: 7, color: 'var(--text-primary)', fontWeight: 600, cursor: 'pointer', fontSize: 13 }}>
+                  View Tenants
+                </button>
+                {fullProvision && (
+                  <button onClick={() => onNavigate?.('config')}
+                    style={{ padding: '8px 16px', background: '#10B981', border: 'none', borderRadius: 7, color: 'white', fontWeight: 600, cursor: 'pointer', fontSize: 13 }}>
+                    Go to S3 Configuration →
+                  </button>
+                )}
+              </div>
             </div>
           )}
         </div>

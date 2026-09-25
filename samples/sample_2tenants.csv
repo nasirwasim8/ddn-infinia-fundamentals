@@ -1,0 +1,5 @@
+tenant,subtenant,username,scope,default_password
+devops,ci-cd,pipeline-eng-01,service-user,DDN@Infinia2024!
+devops,monitoring,sre-eng-01,service-user,DDN@Infinia2024!
+research,lab-alpha,researcher-alpha-01,service-user,DDN@Infinia2024!
+research,lab-beta,researcher-beta-01,service-user,DDN@Infinia2024!

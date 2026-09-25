@@ -469,11 +469,24 @@ class BulkProvisionRequest(BaseModel):
     content: str
     format: Optional[str] = 'yaml'
     s3_expiry: Optional[str] = '1y'
+    # ── Full end-to-end mode (mirrors Provision Wizard) ──────────
+    full_provision: bool = False          # if True: S3 keys + service + DNS + creds
+    s3_service_suffix: str = 'obj'       # service name = "{tenant}{suffix}"
+    s3_vhost_template: str = 's3.{tenant}.infinia.io'  # vhost per tenant
+    s3_admin_suffix: str = 'admin'       # S3 admin username = "{tenant}{suffix}"
 
 
 @router.post("/wizard/bulk-provision")
 def bulk_provision(req: BulkProvisionRequest):
-    """Parse YAML/CSV and provision ALL tenants in one SSE stream."""
+    """Parse YAML/CSV and provision ALL tenants in one SSE stream.
+
+    When req.full_provision=True, each tenant also gets:
+      - S3 admin user created via SSH+redcli (tenant user store)
+      - S3 access keys generated via redcli s3 access add
+      - S3 service created via redcli service create
+      - /etc/hosts entry added in WSL
+      - Credentials saved to infinia_s3_tenants.json
+    """
 
     def _stream():
         try:
@@ -491,85 +504,220 @@ def bulk_provision(req: BulkProvisionRequest):
             return
 
         tenants = parsed.get('tenants', [])
-        default_pw = parsed.get('default_password', 'DDN@Infinia2024!')
+        default_pw = parsed.get('default_password', '')
+        mode_label = 'Full End-to-End' if req.full_provision else 'Tenant/Subtenant/User'
         yield sse_event('init', cluster, 'success',
-                        f'Cluster: {cluster} | Provisioning {len(tenants)} tenants…')
+                        f'Cluster: {cluster} | Mode: {mode_label} | {len(tenants)} tenants…')
         time.sleep(0.2)
 
+        # Import SSH helpers once if full_provision
+        ssh_exec = redcli_user_add = redcli_s3_access_add = None
+        if req.full_provision:
+            try:
+                from app.ssh_helper import ssh_exec, redcli_user_add, redcli_s3_access_add
+            except Exception as e:
+                yield sse_event('init', 'ssh', 'failed', f'SSH helper unavailable — full provision aborted: {e}')
+                return
+
         total_ok = total_err = 0
+        first_subtenant_per_tenant: dict = {}  # track first subtenant for S3 service
 
         for t in tenants:
-            tname = t['name']
-            tadmin = t.get('admin', f'{tname}-admin')
-            tadmin_pw = t.get('admin_password', default_pw)
+            tname    = t['name']
+            tadmin   = t.get('admin', f'{tname}-admin')
 
-            # ── Create tenant ──
+            # ── 1. Create tenant (REST API) ──────────────────────────────────
             yield sse_event('tenant-create', tname, 'running', f'Creating tenant "{tname}"…')
             r = mgmt_post(
                 f"/redapi/v1/clusters/{cluster}/tenants",
-                payload={
-                    "name": tname,
-                    "xattrs": {"RED_INTERNAL": {"primary-admin": tadmin}}
-                }
+                payload={"name": tname, "xattrs": {"RED_INTERNAL": {"primary-admin": tadmin}}}
             )
             if r.status_code in (200, 201):
-                yield sse_event('tenant-create', tname, 'success', f'✅ Tenant "{tname}" created')
+                yield sse_event('tenant-create', tname, 'success', f'Tenant "{tname}" created')
                 total_ok += 1
             elif 'already exists' in r.text.lower() or r.status_code == 409:
-                yield sse_event('tenant-create', tname, 'skipped', f'⏭ Tenant "{tname}" already exists')
+                yield sse_event('tenant-create', tname, 'skipped', f'Tenant "{tname}" already exists')
             else:
-                yield sse_event('tenant-create', tname, 'failed', f'❌ Tenant "{tname}" failed', r.text[:150])
+                yield sse_event('tenant-create', tname, 'failed', f'Tenant "{tname}" failed', r.text[:150])
                 total_err += 1
                 time.sleep(0.2)
-                continue   # skip subtenants/users if tenant creation fails
+                continue
             time.sleep(0.2)
 
-            # ── Create subtenants + users ──
-            for st in t.get('subtenants', []):
+            # ── 2. Subtenants + realm users (REST API) ───────────────────────
+            for idx, st in enumerate(t.get('subtenants', [])):
                 stname = st['name']
+                if idx == 0:
+                    first_subtenant_per_tenant[tname] = stname
+
                 yield sse_event('subtenant-create', stname, 'running', f'  Creating subtenant "{tname}/{stname}"…')
                 r = mgmt_post(
                     f"/redapi/v1/clusters/{cluster}/tenants/{tname}/subtenants",
                     payload={"name": stname, "xattrs": {}}
                 )
                 if r.status_code in (200, 201):
-                    yield sse_event('subtenant-create', stname, 'success', f'  ✅ Subtenant "{stname}" created')
+                    yield sse_event('subtenant-create', stname, 'success', f'  Subtenant "{stname}" created')
                 elif 'already exists' in r.text.lower() or r.status_code == 409:
-                    yield sse_event('subtenant-create', stname, 'skipped', f'  ⏭ Subtenant "{stname}" exists')
+                    yield sse_event('subtenant-create', stname, 'skipped', f'  Subtenant "{stname}" exists')
                 else:
-                    yield sse_event('subtenant-create', stname, 'failed', f'  ❌ Subtenant "{stname}" failed', r.text[:100])
+                    yield sse_event('subtenant-create', stname, 'failed', f'  Subtenant "{stname}" failed', r.text[:100])
                 time.sleep(0.15)
 
                 for u in st.get('users', []):
-                    uname = u if isinstance(u, str) else u.get('username', '')
+                    uname  = u if isinstance(u, str) else u.get('username', '')
                     uscope = 'service-user' if isinstance(u, str) else u.get('scope', 'service-user')
-                    if not uname or uname == 'realm_admin': continue
+                    if not uname or uname == 'realm_admin':
+                        continue
                     yield sse_event('user-create', uname, 'running', f'    Creating user "{uname}"…')
-                    # POST /redapi/v1/user with caps header (correct endpoint)
-                    caps = f"{tname}:{uscope}"
-                    r = mgmt_post(
-                        "/redapi/v1/user",
-                        extra_headers={
-                            'User_id': uname,
-                            'Password': default_pw,
-                            'caps': caps,
-                        }
-                    )
-                    if r.status_code in (200, 201):
-                        yield sse_event('user-create', uname, 'success', f'    ✅ User "{uname}" created')
-                        total_ok += 1
-                    elif 'already exists' in r.text.lower() or r.status_code == 409:
-                        yield sse_event('user-create', uname, 'skipped', f'    ⏭ User "{uname}" exists')
+
+                    if req.full_provision:
+                        # Full mode: use SSH+redcli (tenant user store — required for S3 access)
+                        try:
+                            added = redcli_user_add(uname, tname, default_pw or 'changeme')
+                            if added:
+                                yield sse_event('user-create', uname, 'success', f'    User "{uname}" created (tenant user store)')
+                                total_ok += 1
+                            else:
+                                yield sse_event('user-create', uname, 'skipped', f'    User "{uname}" already exists')
+                        except Exception as e:
+                            yield sse_event('user-create', uname, 'failed', f'    redcli user add failed: {e}')
+                            total_err += 1
                     else:
-                        yield sse_event('user-create', uname, 'failed', f'    ❌ User "{uname}" failed', r.text[:100])
+                        # Basic mode: REST API realm user creation
+                        caps = f"{tname}:{uscope}"
+                        r = mgmt_post("/redapi/v1/user", extra_headers={
+                            'User_id': uname, 'Password': default_pw or 'changeme', 'caps': caps,
+                        })
+                        if r.status_code in (200, 201):
+                            yield sse_event('user-create', uname, 'success', f'    User "{uname}" created')
+                            total_ok += 1
+                        elif 'already exists' in r.text.lower() or r.status_code == 409:
+                            yield sse_event('user-create', uname, 'skipped', f'    User "{uname}" exists')
+                        else:
+                            yield sse_event('user-create', uname, 'failed', f'    User "{uname}" failed', r.text[:100])
+                            total_err += 1
+                    time.sleep(0.15)
+
+            # ── 3. Full provision S3 steps (per-tenant, once) ────────────────
+            if req.full_provision:
+                s3_user    = t.get('admin', f'{tname}-{req.s3_admin_suffix}')
+                svc_name   = f'{tname}{req.s3_service_suffix}'
+                vhost      = req.s3_vhost_template.replace('{tenant}', tname)
+                first_st   = first_subtenant_per_tenant.get(tname, 'default')
+
+                # ── 3a. Create tenant-level S3 user via redcli ──────────────
+                yield sse_event('s3-user', s3_user, 'running', f'  Creating S3 tenant user "{s3_user}" via redcli…')
+                try:
+                    added = redcli_user_add(s3_user, tname, default_pw or 'changeme')
+                    if added:
+                        yield sse_event('s3-user', s3_user, 'success', f'  S3 user "{s3_user}" created (tenant user store)')
+                        total_ok += 1
+                    else:
+                        yield sse_event('s3-user', s3_user, 'skipped', f'  S3 user "{s3_user}" already exists')
+                except Exception as e:
+                    yield sse_event('s3-user', s3_user, 'failed', f'  redcli user add failed: {e}')
+                    total_err += 1
+                time.sleep(0.3)
+
+                # ── 3b. Generate S3 access keys ─────────────────────────────
+                s3_key = s3_secret = ''
+                yield sse_event('s3-access', s3_user, 'running', f'  Generating S3 keys for "{s3_user}"…')
+                try:
+                    result    = redcli_s3_access_add(s3_user, tname, req.s3_expiry or '1y')
+                    s3_key    = result.get('s3_key', '')
+                    s3_secret = result.get('s3_secret', '')
+                    if s3_key:
+                        yield sse_event('s3-access', s3_user, 'success',
+                                       f'  S3 keys generated for "{s3_user}"',
+                                       json.dumps({'tenant': tname, 'user': s3_user,
+                                                   's3_key': s3_key, 's3_secret': s3_secret}))
+                        total_ok += 1
+                    else:
+                        yield sse_event('s3-access', s3_user, 'failed', '  No key returned from redcli')
                         total_err += 1
-                    time.sleep(0.1)
+                except Exception as e:
+                    yield sse_event('s3-access', s3_user, 'failed', f'  Key generation failed: {e}')
+                    total_err += 1
+                time.sleep(0.3)
 
+                # ── 3c. Create S3 service ───────────────────────────────────
+                yield sse_event('s3-service', svc_name, 'running', f'  Creating S3 service "{svc_name}" (vhost: {vhost})…')
+                try:
+                    svc_cmd = (
+                        f'redcli service create {svc_name}'
+                        f' -T file-and-object -P s3'
+                        f' -t {tname} -s {first_st}'
+                        f' -V {vhost}'
+                        f' -A {s3_user}'
+                    )
+                    rc, out, err = ssh_exec(svc_cmd)
+                    combined = out + err
+                    if 'added' in combined.lower() or rc == 0:
+                        yield sse_event('s3-service', svc_name, 'success', f'  Service "{svc_name}" ready — {vhost}')
+                        total_ok += 1
+                    elif 'already exists' in combined.lower():
+                        yield sse_event('s3-service', svc_name, 'skipped', f'  Service "{svc_name}" already exists')
+                    else:
+                        yield sse_event('s3-service', svc_name, 'failed', combined[:150])
+                        total_err += 1
+                except Exception as e:
+                    yield sse_event('s3-service', svc_name, 'failed', str(e))
+                    total_err += 1
+                time.sleep(0.3)
 
+                # ── 3d. Register DNS in WSL /etc/hosts ──────────────────────
+                try:
+                    import subprocess as _sp
+                    from app.config import load_config as _lc
+                    _cfg_data   = _lc()
+                    _ssh_pass   = _cfg_data.get('ssh_password', '')
+                    _srv_ip     = _cfg_data.get('ssh_host', _cfg_data.get('mgmt_server', ''))
+                    hosts_entry = f'{_srv_ip}  {vhost}'
+                    existing    = open('/etc/hosts').read()
+                    if vhost not in existing:
+                        # Pass password as first stdin line (sudo -S reads it),
+                        # then the entry as second line (tee reads it).
+                        _sp.run(
+                            ['sudo', '-S', 'tee', '-a', '/etc/hosts'],
+                            input=f'{_ssh_pass}\n{hosts_entry}\n',
+                            capture_output=True, text=True
+                        )
+                        if vhost in open('/etc/hosts').read():
+                            yield sse_event('hosts', vhost, 'success', f'  /etc/hosts updated: {hosts_entry}')
+                        else:
+                            yield sse_event('hosts', vhost, 'failed',
+                                           f'  Could not write /etc/hosts — add manually: {hosts_entry}')
+                    else:
+                        yield sse_event('hosts', vhost, 'skipped', f'  {vhost} already in /etc/hosts')
+                except Exception as e:
+                    yield sse_event('hosts', vhost, 'skipped', f'  /etc/hosts not updated: {e}')
+                time.sleep(0.2)
 
-        status = 'success' if total_err == 0 else 'failed'
+                # ── 3e. Save S3 credentials ─────────────────────────────────
+                if s3_key and s3_secret:
+                    try:
+                        from app.config import load_config as _lc2, save_s3_tenant
+                        base_cfg = _lc2()
+                        port     = base_cfg.get('endpoint', 'https://placeholder:8111').split(':')[-1].rstrip('/')
+                        save_s3_tenant(tname, {
+                            'tenant_name': tname,
+                            'endpoint':    f'https://{vhost}:{port}',
+                            'access_key':  s3_key,
+                            'secret_key':  s3_secret,
+                            'description': f'Bulk provisioned — S3 user: {s3_user}',
+                        })
+                        yield sse_event('config', tname, 'success',
+                                       f'  Credentials saved — tenant "{tname}" now available in S3 Configuration')
+                        total_ok += 1
+                    except Exception as e:
+                        yield sse_event('config', tname, 'skipped', f'  Credential save skipped: {e}')
+
+                time.sleep(0.2)
+
+        status = 'success' if total_err == 0 else 'partial' if total_ok > 0 else 'failed'
+        mode_note = ' (Full S3 provisioning complete — tenants ready in S3 Configuration)' if req.full_provision else ''
         yield sse_event('done', 'bulk-provision', status,
-                        f'Bulk provisioning done — {total_ok} created, {total_err} errors across {len(tenants)} tenants.')
+                        f'Done — {total_ok} created/updated, {total_err} errors across {len(tenants)} tenants.{mode_note}')
 
     return StreamingResponse(_stream(), media_type="text/event-stream")
 

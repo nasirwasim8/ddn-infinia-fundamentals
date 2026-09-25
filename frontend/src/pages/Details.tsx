@@ -43,9 +43,9 @@ export default function Details() {
       {/* Legend */}
       <div style={{ display:'flex', gap:12, flexWrap:'wrap' as const }}>
         {[
-          { label:'REST API', color:REST, desc:'Infinia Management API — https://<infinia-server-ip>/redapi/v1' },
-          { label:'SSH + redcli', color:SSH, desc:'redcli CLI over SSH via paramiko — host <infinia-server-ip>:22' },
-          { label:'S3 / boto3', color:S3, desc:'S3-compatible object store — https://<infinia-server-ip>:8111 (or per-tenant vhost:8111)' },
+          { label:'REST API', color:REST, desc:'Infinia Management API — https://{`<infinia-server-ip>`}/redapi/v1' },
+          { label:'SSH + redcli', color:SSH, desc:'redcli CLI over SSH via paramiko — host {`<infinia-server-ip>`}:22' },
+          { label:'S3 / boto3', color:S3, desc:'S3-compatible object store — https://{`<infinia-server-ip>`}:8111 (or per-tenant vhost:8111)' },
         ].map(m => (
           <div key={m.label} style={{ flex:1, minWidth:200, padding:'12px 16px', borderRadius:10, border:'1px solid '+m.color+'30', background:m.color+'08' }}>
             <Tag label={m.label} color={m.color} />
@@ -116,7 +116,7 @@ export default function Details() {
       {/* S3 Routing note */}
       <div style={{ padding:'14px 18px', borderRadius:10, border:'1px solid '+S3+'30', background:S3+'08', fontSize:13, color:'var(--text-muted)' }}>
         <span style={{ fontWeight:700, color:S3 }}>S3 Endpoint Routing: </span>
-        Default tenant (red) uses bare IP <code style={{ fontFamily:'monospace', fontSize:12 }}>https://<infinia-server-ip>:8111</code>.
+        Default tenant (red) uses bare IP <code style={{ fontFamily:'monospace', fontSize:12 }}>https://{`<infinia-server-ip>`}:8111</code>.
         All other tenants use virtual-hosted style <code style={{ fontFamily:'monospace', fontSize:12 }}>https://s3.&lt;tenant&gt;.infinia.io:8111</code>
         — requires a matching entry in WSL <code style={{ fontFamily:'monospace', fontSize:12 }}>/etc/hosts</code> for boto3 to resolve the hostname.
       </div>

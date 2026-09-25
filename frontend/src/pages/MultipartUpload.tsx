@@ -3,23 +3,25 @@ import { toast } from 'react-hot-toast'
 import * as api from '../services/api'
 import { UploadCloud, XCircle } from 'lucide-react'
 
-export default function MultipartUpload() {
+export default function MultipartUpload({ activeTenant }: { activeTenant?: string | null }) {
   const [buckets, setBuckets] = useState<any[]>([])
   const [selectedBucket, setSelectedBucket] = useState('')
   const [chunkSize, setChunkSize] = useState(5) // MB
   const [file, setFile] = useState<File | null>(null)
-  
+
   const [progress, setProgress] = useState(0)
   const [parts, setParts] = useState<{status: 'pending'|'uploading'|'done'}[]>([])
   const [uploadId, setUploadId] = useState('')
   const [speed, setSpeed] = useState('')
 
   useEffect(() => {
-    api.listBuckets().then(res => {
-      setBuckets(res.buckets || [])
-      if (res.buckets?.length > 0) setSelectedBucket(res.buckets[0].Name)
-    })
-  }, [])
+    api.listBuckets(activeTenant ?? undefined).then(res => {
+      const list = res.data?.buckets || []
+      setBuckets(list)
+      if (list.length > 0) setSelectedBucket(list[0].Name)
+      else setSelectedBucket('')
+    }).catch(() => setBuckets([]))
+  }, [activeTenant])
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {

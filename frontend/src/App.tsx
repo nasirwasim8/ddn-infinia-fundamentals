@@ -10,16 +10,16 @@ import TenantSwitcher from './components/TenantSwitcher'
 import Configuration from './pages/Configuration'
 
 import BucketManager from './pages/BucketManager'
-import ObjectExplorer from './pages/ObjectExplorer'
 
 import ObjectLock from './pages/ObjectLock'
 
-import MultipartUpload from './pages/MultipartUpload'
+
 import PresignedURL from './pages/PresignedURL'
 import Lifecycle from './pages/Lifecycle'
 import CorsPolicy from './pages/CorsPolicy'
 import Benchmark from './pages/Benchmark'
 import Details from './pages/Details'
+import TenantIsolation from './pages/TenantIsolation'
 
 // Admin / Management Plane pages (lazy loaded)
 const AdminDashboard      = lazy(() => import('./pages/admin/AdminDashboard'))
@@ -31,6 +31,7 @@ const ConnectionSettings  = lazy(() => import('./pages/admin/ConnectionSettings'
 const ProvisionWizard     = lazy(() => import('./pages/admin/ProvisionWizard'))
 const TeardownWizard      = lazy(() => import('./pages/admin/TeardownWizard'))
 const CSVImport           = lazy(() => import('./pages/admin/CSVImport'))
+const SeedData            = lazy(() => import('./pages/admin/SeedData'))
 
 // ── Tab definitions ──────────────────────────────────────────────
 const TABS = [
@@ -45,22 +46,24 @@ const TABS = [
   { id: 'admin-teardown',    label: 'Teardown Wizard',      icon: 'Trash2',          group: 'admin' },
   { id: 'admin-import',      label: 'CSV / YAML Import',    icon: 'FileUp',          group: 'admin' },
   { id: 'details',           label: 'Technical Details',    icon: 'FileText',        group: 'admin' },
+  { id: 'admin-seeddata',    label: 'Sample Data Generator',icon: 'Zap',             group: 'admin' },
 
   // Setup (S3 Data Plane)
   { id: 'config',            label: 'S3 Configuration',  icon: 'Settings',        group: 'setup' },
 
   // Storage
-  { id: 'buckets',           label: 'Bucket Manager',    icon: 'Database',        group: 'storage' },
-  { id: 'objects',           label: 'Object Explorer',   icon: 'Box',             group: 'storage' },
+  { id: 'buckets',           label: 'Storage Explorer',  icon: 'Database',        group: 'storage' },
   // Compliance
 
   { id: 'object-lock',       label: 'Object Lock / WORM',icon: 'Lock',            group: 'compliance' },
 
   // Advanced
-  { id: 'multipart',         label: 'Multipart Upload',  icon: 'UploadCloud',     group: 'advanced' },
+
   { id: 'presigned',         label: 'Presigned URLs',    icon: 'Link',            group: 'advanced' },
   { id: 'lifecycle',         label: 'Lifecycle Rules',   icon: 'RefreshCw',       group: 'advanced' },
   { id: 'cors',              label: 'CORS & Policy',     icon: 'Globe',           group: 'advanced' },
+  // NCP
+  { id: 'tenant-isolation',  label: 'Tenant Isolation',  icon: 'ShieldCheck',     group: 'ncp' },
   // Performance
   { id: 'benchmark',         label: 'Performance',       icon: 'BarChart2',       group: 'perf' },
 
@@ -72,11 +75,12 @@ const NAV_GROUPS = [
   { id: 'storage',    label: 'Storage' },
   { id: 'compliance', label: 'Compliance' },
   { id: 'advanced',   label: 'Advanced' },
+  { id: 'ncp',        label: 'NCP' },
   { id: 'perf',       label: 'Performance' },
 ]
 
 // Groups that use S3 and need the tenant switcher
-const S3_GROUPS = new Set(['setup', 'storage', 'compliance', 'advanced', 'perf'])
+const S3_GROUPS = new Set(['setup', 'storage', 'compliance', 'advanced', 'ncp', 'perf'])
 
 function PageLoader() {
   return (
@@ -111,16 +115,17 @@ export default function App() {
       case 'config':           return <Configuration />
 
       case 'buckets':          return <BucketManager {...s3Props} />
-      case 'objects':          return <ObjectExplorer {...s3Props} />
 
       case 'object-lock':      return <ObjectLock {...s3Props} />
 
-      case 'multipart':        return <MultipartUpload {...s3Props} />
+
       case 'presigned':        return <PresignedURL {...s3Props} />
       case 'lifecycle':        return <Lifecycle {...s3Props} />
       case 'cors':             return <CorsPolicy {...s3Props} />
       case 'benchmark':        return <Benchmark {...s3Props} />
       case 'details':          return <Details />
+      case 'admin-seeddata':   return <SeedData />
+      case 'tenant-isolation': return <TenantIsolation />
 
       default:                 return <AdminDashboard onNavigate={setActiveTab} />
     }

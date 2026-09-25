@@ -3,22 +3,24 @@ import { toast } from 'react-hot-toast'
 import * as api from '../services/api'
 import { Link, Copy, ExternalLink, Clock } from 'lucide-react'
 
-export default function PresignedURL() {
+export default function PresignedURL({ activeTenant }: { activeTenant?: string | null }) {
   const [buckets, setBuckets] = useState<any[]>([])
   const [selectedBucket, setSelectedBucket] = useState('')
   const [objectKey, setObjectKey] = useState('')
   const [method, setMethod] = useState<'GET' | 'PUT'>('GET')
   const [expiry, setExpiry] = useState(3600)
-  
+
   const [url, setUrl] = useState('')
   const [timeLeft, setTimeLeft] = useState(0)
 
   useEffect(() => {
-    api.listBuckets().then(res => {
-      setBuckets(res.buckets || [])
-      if (res.buckets?.length > 0) setSelectedBucket(res.buckets[0].Name)
-    })
-  }, [])
+    api.listBuckets(activeTenant ?? undefined).then(res => {
+      const list = res.data?.buckets || []
+      setBuckets(list)
+      if (list.length > 0) setSelectedBucket(list[0].Name)
+      else setSelectedBucket('')
+    }).catch(() => setBuckets([]))
+  }, [activeTenant])
 
   useEffect(() => {
     if (!url) return
@@ -29,14 +31,15 @@ export default function PresignedURL() {
   }, [url])
 
   const generate = async () => {
-    if (!objectKey) return toast.error('Object Key required')
+    if (!selectedBucket) return toast.error('Select a bucket first')
+    if (!objectKey.trim()) return toast.error('Object Key required')
     try {
-      const res = await api.generatePresignedUrl(selectedBucket, objectKey, method, expiry)
+      const res = await api.generatePresignedUrl(selectedBucket, objectKey.trim(), method, expiry, activeTenant)
       setUrl(res.url)
       setTimeLeft(expiry)
       toast.success('URL Generated')
     } catch (err: any) {
-      toast.error('Failed to generate URL: ' + err.message)
+      toast.error('Failed: ' + (err.response?.data?.detail || err.message))
     }
   }
 

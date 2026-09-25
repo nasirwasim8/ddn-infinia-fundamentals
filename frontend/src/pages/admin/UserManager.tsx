@@ -26,19 +26,28 @@ function scopeColor(caps: string) {
 export default function UserManager({ onNavigate }: { onNavigate?: (tab: string) => void }) {
   const [users, setUsers] = useState<any[]>([])
   const [tenants, setTenants] = useState<string[]>([])
-  const [filterTenant, setFilterTenant] = useState('all')
+  const [filterTenant, setFilterTenant] = useState('red')   // default to red — avoids slow "all" SSH sweep on mount
   const [loading, setLoading] = useState(true)
   const [showCreate, setShowCreate] = useState(false)
-  const [form, setForm] = useState({ username: '', tenant: '', subtenant: '', password: 'DDN@Infinia2024!', caps: '', email: '' })
+  const [form, setForm] = useState({ username: '', tenant: '', subtenant: '', password: '', caps: '', email: '' })
 
   const load = async () => {
     setLoading(true)
     try {
-      const [ur, tr] = await Promise.all([listUsers(filterTenant === 'all' ? undefined : filterTenant), listTenants()])
+      // Load tenants list first so the dropdown is populated
+      const tr = await listTenants()
+      const tenantNames: string[] = (tr.data.tenants || []).map((t: any) => t.name)
+      setTenants(tenantNames)
+
+      // Load users — pass specific tenant for speed; 'all' lets backend SSH every tenant (slow)
+      const tenantParam = filterTenant === 'all' ? undefined : filterTenant
+      const ur = await listUsers(tenantParam)
       setUsers(ur.data.users || [])
-      setTenants((tr.data.tenants || []).map((t: any) => t.name))
-    } catch { toast.error('Failed to load users') }
-    finally { setLoading(false) }
+    } catch {
+      toast.error('Failed to load users')
+    } finally {
+      setLoading(false)
+    }
   }
 
   useEffect(() => { load() }, [filterTenant])

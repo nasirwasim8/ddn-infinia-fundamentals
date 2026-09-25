@@ -53,8 +53,18 @@ export const abortMultipart = (bucket: string, data: any) => api.delete(`/bucket
 export const listMultipart = (bucket: string) => api.get(`/buckets/${bucket}/multipart`)
 
 // Presigned
-export const getPresignedGet = (bucket: string, key: string, expiry_seconds: number) => api.post('/presigned/get', { bucket, key, expiry_seconds })
-export const getPresignedPut = (bucket: string, key: string, expiry_seconds: number) => api.post('/presigned/put', { bucket, key, expiry_seconds })
+export const getPresignedGet = (bucket: string, key: string, expiry_seconds: number, tenant?: string) =>
+  api.post('/presigned/get', { bucket, key, expiry_seconds }, { params: tenant ? { tenant } : {} })
+export const getPresignedPut = (bucket: string, key: string, expiry_seconds: number, tenant?: string) =>
+  api.post('/presigned/put', { bucket, key, expiry_seconds }, { params: tenant ? { tenant } : {} })
+
+// Unified helper used by PresignedURL page
+export const generatePresignedUrl = (bucket: string, key: string, method: string, expiry_seconds: number, tenant?: string | null) => {
+  const t = tenant ?? undefined
+  return method === 'PUT'
+    ? getPresignedPut(bucket, key, expiry_seconds, t).then(res => ({ url: res.data?.url || res.data }))
+    : getPresignedGet(bucket, key, expiry_seconds, t).then(res => ({ url: res.data?.url || res.data }))
+}
 
 // Lifecycle
 export const getLifecycle = (bucket: string) => api.get(`/buckets/${bucket}/lifecycle`)

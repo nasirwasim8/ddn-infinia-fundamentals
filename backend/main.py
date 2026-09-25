@@ -10,7 +10,7 @@ from app.routers import (
     object_lock, legal_hold, multipart, presigned,
     lifecycle, cors_policy, benchmark, analytics, management,
     admin_auth, admin_tenants, admin_users, admin_s3access,
-    admin_infra, admin_wizard,
+    admin_infra, admin_wizard, isolation, seeddata,
 )
 from app.routers.config_s3 import router as config_s3_router
 
@@ -44,6 +44,10 @@ app.include_router(benchmark.router,     prefix="/api")
 app.include_router(analytics.router,     prefix="/api")
 app.include_router(management.router,    prefix="/api")
 app.include_router(config_s3_router,     prefix="/api", tags=["S3 Tenant Configs"])
+
+# ── NCP / Isolation / Seed Data ──
+app.include_router(isolation.router,  prefix="/api", tags=["NCP: Tenant Isolation"])
+app.include_router(seeddata.router,   prefix="/api/admin", tags=["NCP: Sample Data Generator"])
 
 # ── Management Plane routes (new) ──
 app.include_router(admin_auth.router,     prefix="/api/admin", tags=["Admin: Auth"])
