@@ -1,0 +1,197 @@
+﻿---
+# ==============================================================================
+# DDN INFINIA MULTI-TENANT BULK PROVISIONING PLAYBOOK
+# ==============================================================================
+# Automates Day-1 bulk provisioning for Cloud Builders / NCPs:
+# 1. Control Plane (REST API): Authenticate, discover cluster, create tenants & subtenants
+# 2. Data Plane (SSH/redcli): Create S3 tenant users, generate S3 access keys, create S3 services
+# 3. Client Output: Export S3 credentials and vHost DNS entries
+#
+# Usage:
+#   ansible-playbook -i inventory.ini infinia_bulk_provision.yml -e @vars/tenants.yml
+# ==============================================================================
+
+- name: "Phase 1: Control Plane — Authenticate & Create Tenants via REST API"
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - vars/tenants.yml
+
+  tasks:
+    - name: "1.1 Authenticate with Infinia Management REST API"
+      ansible.builtin.uri:
+        url: "https://{{ hostvars['infinia-01']['mgmt_server'] }}:{{ hostvars['infinia-01']['mgmt_port'] | default(443) }}/redapi/v1/auth_user"
+        method: GET
+        headers:
+          User_id: "{{ hostvars['infinia-01']['mgmt_user'] }}"
+          Password: "{{ hostvars['infinia-01']['mgmt_password'] }}"
+        validate_certs: "{{ hostvars['infinia-01']['mgmt_validate_certs'] | default(false) }}"
+        status_code: [200]
+      register: auth_resp
+
+    - name: "1.2 Set Auth Token"
+      ansible.builtin.set_fact:
+        mgmt_token: "{{ auth_resp.json.data.token }}"
+
+    - name: "1.3 Discover Infinia Cluster ID"
+      ansible.builtin.uri:
+        url: "https://{{ hostvars['infinia-01']['mgmt_server'] }}:{{ hostvars['infinia-01']['mgmt_port'] | default(443) }}/redapi/v1/clusters"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ mgmt_token }}"
+        validate_certs: "{{ hostvars['infinia-01']['mgmt_validate_certs'] | default(false) }}"
+        status_code: [200]
+      register: clusters_resp
+
+    - name: "1.4 Resolve Primary Cluster Name"
+      ansible.builtin.set_fact:
+        cluster_id: >-
+          {{
+            clusters_resp.json.data.keys() | list | first
+            if (clusters_resp.json.data is mapping)
+            else (clusters_resp.json.data[0].name | default(clusters_resp.json.data[0]))
+          }}
+
+    - name: "1.5 Display Target Cluster Info"
+      ansible.builtin.debug:
+        msg: "Connected to Infinia Cluster: {{ cluster_id }} at {{ hostvars['infinia-01']['mgmt_server'] }}"
+
+    - name: "1.6 Provision Tenants via REST API"
+      ansible.builtin.uri:
+        url: "https://{{ hostvars['infinia-01']['mgmt_server'] }}:{{ hostvars['infinia-01']['mgmt_port'] | default(443) }}/redapi/v1/clusters/{{ cluster_id }}/tenants"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ mgmt_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          name: "{{ item.name }}"
+          xattrs:
+            RED_INTERNAL:
+              primary-admin: "{{ item.admin }}"
+        validate_certs: "{{ hostvars['infinia-01']['mgmt_validate_certs'] | default(false) }}"
+        status_code: [200, 201, 409]
+      loop: "{{ tenants }}"
+      register: tenant_create_resp
+      changed_when: tenant_create_resp.status in [200, 201]
+
+    - name: "1.7 Provision Subtenants via REST API"
+      ansible.builtin.uri:
+        url: "https://{{ hostvars['infinia-01']['mgmt_server'] }}:{{ hostvars['infinia-01']['mgmt_port'] | default(443) }}/redapi/v1/clusters/{{ cluster_id }}/tenants/{{ item.0.name }}/subtenants"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ mgmt_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          name: "{{ item.1.name }}"
+          xattrs: {}
+        validate_certs: "{{ hostvars['infinia-01']['mgmt_validate_certs'] | default(false) }}"
+        status_code: [200, 201, 409]
+      loop: "{{ tenants | subelements('subtenants', skip_missing=true) }}"
+      register: subtenant_create_resp
+      changed_when: subtenant_create_resp.status in [200, 201]
+
+
+# ==============================================================================
+# PHASE 2: DATA PLANE & S3 PROVISIONING (SSH + REDCLI)
+# ==============================================================================
+- name: "Phase 2: Data Plane — S3 Users, Keys & Virtual-Hosted Services"
+  hosts: infinia_nodes
+  gather_facts: false
+  vars_files:
+    - vars/tenants.yml
+
+  tasks:
+    - name: "2.1 Register S3 Admin Users in Tenant S3 Daemon Store"
+      ansible.builtin.command: >
+        redcli user add {{ item.admin }} -t {{ item.name }} -p '{{ item.admin_password | default(default_user_password) }}'
+      loop: "{{ tenants }}"
+      register: s3_user_res
+      changed_when: "'has been added' in s3_user_res.stdout"
+      failed_when:
+        - s3_user_res.rc != 0
+        - "'already exists' not in s3_user_res.stdout and 'already exists' not in s3_user_res.stderr"
+
+    - name: "2.2 Grant Subtenant Scope to S3 Admin Users"
+      ansible.builtin.command: >
+        redcli user grant {{ item.admin }} {{ item.name }}/{{ item.subtenants[0].name | default(item.name) }}
+      loop: "{{ tenants }}"
+      register: s3_grant_res
+      changed_when: "'granted' in s3_grant_res.stdout.lower()"
+      failed_when: false
+
+    - name: "2.3 Generate S3 Access Keys for Each Tenant"
+      ansible.builtin.shell: >
+        redcli user login {{ mgmt_user }} -p '{{ mgmt_password }}' ;
+        redcli s3 access add {{ item.admin }} -t {{ item.name }} -e {{ item.s3_expiry | default(default_s3_expiry) }}
+      loop: "{{ tenants }}"
+      register: s3_key_raw
+      changed_when: true
+
+    - name: "2.4 Parse Generated S3 Access Keys & Secrets"
+      ansible.builtin.set_fact:
+        s3_credentials: >-
+          {{
+            s3_credentials | default([]) + [
+              {
+                'tenant': item.item.name,
+                'admin_user': item.item.admin,
+                's3_key': (item.stdout | regex_search('S3_KEY\s*│\s*(\S+)', '\1') | first | default('')),
+                's3_secret': (item.stdout | regex_search('S3_SECRET\s*│\s*(\S+)', '\1') | first | default('')),
+                'vhost': 's3.' ~ item.item.name ~ '.' ~ (s3_vhost_domain | default('infinia.io')),
+                'service_name': item.item.name ~ (s3_service_suffix | default('obj')),
+                'endpoint': 'https://s3.' ~ item.item.name ~ '.' ~ (s3_vhost_domain | default('infinia.io')) ~ ':' ~ (s3_port | default('8111'))
+              }
+            ]
+          }}
+      loop: "{{ s3_key_raw.results }}"
+      no_log: false
+
+    - name: "2.5 Create Virtual-Hosted S3 Services"
+      ansible.builtin.command: >
+        redcli service create {{ item.name }}{{ s3_service_suffix | default('obj') }}
+        -T file-and-object -P s3
+        -t {{ item.name }} -s {{ item.subtenants[0].name | default(item.name) }}
+        -V s3.{{ item.name }}.{{ s3_vhost_domain | default('infinia.io') }}
+        -A {{ item.admin }}
+      loop: "{{ tenants }}"
+      register: s3_svc_res
+      changed_when: "'added' in s3_svc_res.stdout.lower()"
+      failed_when:
+        - s3_svc_res.rc != 0
+        - "'already exists' not in s3_svc_res.stdout.lower() and 'already exists' not in s3_svc_res.stderr.lower()"
+
+
+# ==============================================================================
+# PHASE 3: CLIENT OUTPUT & ENVIRONMENT EXPORT
+# ==============================================================================
+- name: "Phase 3: Client Output — Export S3 Credentials & DNS Records"
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - vars/tenants.yml
+
+  tasks:
+    - name: "3.1 Collect Provisioned S3 Credentials from Infinia Host"
+      ansible.builtin.set_fact:
+        final_creds: "{{ hostvars['infinia-01']['s3_credentials'] }}"
+
+    - name: "3.2 Save S3 Credentials to JSON File"
+      ansible.builtin.copy:
+        content: "{{ final_creds | to_nice_json }}"
+        dest: "s3_credentials_output.json"
+        mode: "0600"
+
+    - name: "3.3 Display Summary of Provisioned Tenants"
+      ansible.builtin.debug:
+        msg:
+          - "================================================================="
+          - "🎉 INFINIA MULTI-TENANT BULK PROVISIONING COMPLETE"
+          - "================================================================="
+          - "Tenants Provisioned: {{ final_creds | map(attribute='tenant') | list }}"
+          - "Credentials saved to: {{ playbook_dir }}/s3_credentials_output.json"
+          - "DNS /etc/hosts entries required on client workstations:"
+          - "{% for c in final_creds %}{{ hostvars['infinia-01']['mgmt_server'] }}  {{ c.vhost }}
+{% endfor %}"
+          - "================================================================="

@@ -146,8 +146,11 @@ def provision(req: ProvisionRequest):
                 time.sleep(0.2)
 
                 # ── S3 access + service creation ──
-                if u.get_s3_access and req.dataset and req.dataset.type == 's3':
-                    svc_name = req.dataset.service_name or f'{req.tenant}obj'
+                # Run for any user with get_s3_access=True — dataset is optional,
+                # svc_name and vhost are auto-derived from tenant name as fallback
+                if u.get_s3_access:
+                    svc_name = (req.dataset.service_name if req.dataset and req.dataset.service_name else None) \
+                               or f'{req.tenant}obj'
                     vhost    = f's3.{req.tenant}.infinia.io'
                     yield sse_event('s3-access', u.username, 'running', f'Adding S3 access for "{u.username}"...')
                     try:
@@ -223,6 +226,118 @@ def provision(req: ProvisionRequest):
                                            f'S3 credentials saved — tenant "{req.tenant}" ready in S3 Configuration')
                         except Exception as e:
                             yield sse_event('config', req.tenant, 'skipped', f'Credential save skipped: {e}')
+
+        # ── Guaranteed S3 full-provision (always runs) ──────────────────────
+        # Ensures the tenant ALWAYS appears in Storage Explorer and S3 Configuration
+        # regardless of whether the presenter added users in the wizard UI.
+        s3_admin   = req.admin_user               # always provided (Step 1 of wizard)
+        svc_name   = (req.dataset.service_name if req.dataset and req.dataset.service_name else None) \
+                     or f'{req.tenant}obj'
+        vhost_auto = f's3.{req.tenant}.infinia.io'
+
+        try:
+            from app.ssh_helper import ssh_exec as _ssh, redcli_user_add as _add, \
+                                       redcli_s3_access_add as _s3add
+        except Exception as e:
+            yield sse_event('s3-auto', s3_admin, 'skipped', f'SSH unavailable — skipping auto S3 provision: {e}')
+            _ssh = _add = _s3add = None
+
+        if _ssh and _add and _s3add:
+            # 3a. Ensure S3 admin user exists in tenant user store
+            yield sse_event('s3-user', s3_admin, 'running', f'Ensuring S3 admin user "{s3_admin}" in tenant store…')
+            try:
+                added = _add(s3_admin, req.tenant, req.default_password or 'DDN@Infinia2024!')
+                if added:
+                    yield sse_event('s3-user', s3_admin, 'success', f'S3 admin user "{s3_admin}" ready')
+                else:
+                    yield sse_event('s3-user', s3_admin, 'skipped', f'User "{s3_admin}" already exists — continuing')
+            except Exception as e:
+                yield sse_event('s3-user', s3_admin, 'skipped', f'User note: {e}')
+            time.sleep(0.3)
+
+            # 3b. Generate S3 access keys
+            s3_key = s3_secret = ''
+            yield sse_event('s3-access', s3_admin, 'running', f'Generating S3 keys for "{s3_admin}"…')
+            try:
+                result    = _s3add(s3_admin, req.tenant, req.s3_expiry or '1y')
+                s3_key    = result.get('s3_key', '')
+                s3_secret = result.get('s3_secret', '')
+                if s3_key:
+                    yield sse_event('s3-access', s3_admin, 'success',
+                                   f'S3 keys generated',
+                                   json.dumps({'s3_key': s3_key, 's3_secret': s3_secret}))
+                else:
+                    yield sse_event('s3-access', s3_admin, 'failed', 'No key returned from redcli')
+            except Exception as e:
+                yield sse_event('s3-access', s3_admin, 'failed', f'Key generation failed: {e}')
+            time.sleep(0.3)
+
+            # 3c. Create S3 service
+            first_st = req.subtenants[0].name if req.subtenants else 'default'
+            yield sse_event('s3-service', svc_name, 'running', f'Creating S3 service "{svc_name}" (vhost: {vhost_auto})…')
+            try:
+                svc_cmd = (
+                    f'redcli service create {svc_name}'
+                    f' -T file-and-object -P s3'
+                    f' -t {req.tenant} -s {first_st}'
+                    f' -V {vhost_auto}'
+                    f' -A {s3_admin}'
+                )
+                rc, out, err = _ssh(svc_cmd)
+                combined = out + err
+                if 'added' in combined.lower() or rc == 0:
+                    yield sse_event('s3-service', svc_name, 'success', f'Service "{svc_name}" ready — {vhost_auto}')
+                elif 'already exists' in combined.lower():
+                    yield sse_event('s3-service', svc_name, 'skipped', f'Service "{svc_name}" already exists')
+                else:
+                    yield sse_event('s3-service', svc_name, 'failed', combined[:150])
+            except Exception as e:
+                yield sse_event('s3-service', svc_name, 'failed', str(e))
+            time.sleep(0.3)
+
+            # 3d. Register DNS in WSL /etc/hosts
+            try:
+                import subprocess as _sp2
+                from app.config import load_config as _lc3
+                _cfg3     = _lc3()
+                _srv_ip   = _cfg3.get('ssh_host', _cfg3.get('mgmt_server', '192.168.147.129'))
+                _pw3      = _cfg3.get('ssh_password', '')
+                hosts_entry = f'{_srv_ip}  {vhost_auto}'
+                existing    = open('/etc/hosts').read()
+                if vhost_auto not in existing:
+                    _sp2.run(
+                        ['sudo', '-S', 'tee', '-a', '/etc/hosts'],
+                        input=f'{_pw3}\n{hosts_entry}\n',
+                        capture_output=True, text=True
+                    )
+                    if vhost_auto in open('/etc/hosts').read():
+                        yield sse_event('hosts', vhost_auto, 'success', f'/etc/hosts updated: {hosts_entry}')
+                    else:
+                        yield sse_event('hosts', vhost_auto, 'failed',
+                                       f'Could not write /etc/hosts — add manually: {hosts_entry}')
+                else:
+                    yield sse_event('hosts', vhost_auto, 'skipped', f'{vhost_auto} already in /etc/hosts')
+            except Exception as e:
+                yield sse_event('hosts', vhost_auto, 'skipped', f'/etc/hosts not updated: {e}')
+            time.sleep(0.1)
+
+            # 3e. Save credentials so tenant appears in Storage Explorer + S3 Configuration
+            if s3_key and s3_secret:
+                try:
+                    from app.config import load_config as _lc4, save_s3_tenant
+                    base_cfg = _lc4()
+                    port     = base_cfg.get('endpoint', 'https://192.168.147.129:8111').split(':')[-1].rstrip('/')
+                    save_s3_tenant(req.tenant, {
+                        'tenant_name': req.tenant,
+                        'endpoint':    f'https://{vhost_auto}:{port}',
+                        'access_key':  s3_key,
+                        'secret_key':  s3_secret,
+                        'description': f'Provisioned: S3 user {s3_admin}',
+                    })
+                    yield sse_event('config', req.tenant, 'success',
+                                   f'✓ Tenant "{req.tenant}" saved — now visible in Storage Explorer & S3 Configuration')
+                except Exception as e:
+                    yield sse_event('config', req.tenant, 'skipped', f'Credential save skipped: {e}')
 
         yield sse_event('done', 'provision', 'success',
                         f'Tenant "{req.tenant}" fully provisioned with {len(req.subtenants or [])} subtenants.')

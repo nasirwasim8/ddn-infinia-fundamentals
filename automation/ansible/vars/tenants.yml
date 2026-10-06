@@ -1,0 +1,38 @@
+﻿# ── Infinia Bulk Provisioning Declarative Tenants ─────────────────────────────
+# Define one or more tenants to be provisioned across Control Plane & Data Plane.
+
+default_user_password: "DDN@Infinia2024!"
+default_s3_expiry: "1y"
+
+tenants:
+  - name: "devops"
+    admin: "devops-admin"
+    admin_password: "DDN@Infinia2024!"
+    s3_expiry: "1y"
+    subtenants:
+      - name: "ci-cd"
+        users:
+          - username: "jenkins-bot"
+            scope: "service-user"
+          - username: "deployer"
+            scope: "service-user"
+      - name: "staging"
+        users:
+          - username: "qa-lead"
+            scope: "service-user"
+
+  - name: "research"
+    admin: "research-admin"
+    admin_password: "DDN@Infinia2024!"
+    s3_expiry: "1y"
+    subtenants:
+      - name: "ml-training"
+        users:
+          - username: "pytorch-runner"
+            scope: "service-user"
+          - username: "data-scientist"
+            scope: "service-user"
+      - name: "datasets"
+        users:
+          - username: "data-curator"
+            scope: "service-user"

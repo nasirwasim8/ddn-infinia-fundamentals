@@ -85,14 +85,17 @@ def set_retention(bucket: str, key: str, req: ObjectRetentionConfig, tenant: Opt
         raise HTTPException(status_code=400, detail=str(e))
 
 @router.post("/buckets/{bucket}/objects/{key:path}/try-delete-locked")
-def try_delete_locked(bucket: str, key: str, tenant: Optional[str] = Query(None)):
-    """Demo endpoint: attempts to delete a locked object and returns the error as success for demo"""
+def try_delete_locked(bucket: str, key: str, tenant: Optional[str] = Query(None), version_id: Optional[str] = Query(None)):
+    """Demo endpoint: attempts to delete a locked object version and returns the block as a readable result."""
     try:
         s3 = get_s3_client(tenant)
-        s3.delete_object(Bucket=bucket, Key=key)
-        return {"blocked": False, "message": "Object was deleted (not locked)"}
+        kwargs = {'Bucket': bucket, 'Key': key}
+        if version_id:
+            kwargs['VersionId'] = version_id   # REQUIRED — deleting without VersionId only creates a delete marker, which always succeeds and never triggers WORM
+        s3.delete_object(**kwargs)
+        return {"blocked": False, "message": "Object was deleted (Object Lock not enforced on this version)"}
     except Exception as e:
         error_msg = str(e)
-        if 'AccessDenied' in error_msg or 'locked' in error_msg.lower() or 'protected' in error_msg.lower() or 'retention' in error_msg.lower():
+        if any(k in error_msg for k in ('AccessDenied', 'ObjectLockException', 'locked', 'protected', 'retention', 'WORM')):
             return {"blocked": True, "message": "Object is WORM-protected. Deletion BLOCKED by Object Lock.", "error": error_msg}
-        return {"blocked": False, "message": f"Delete failed: {error_msg}", "error": error_msg}
+        return {"blocked": False, "message": f"Delete failed (unexpected): {error_msg}", "error": error_msg}

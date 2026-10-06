@@ -75,6 +75,61 @@ def delete_bucket(name: str, tenant: Optional[str] = Query(None)):
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+
+@router.delete("/buckets/{name}/force")
+def force_delete_bucket(name: str, tenant: Optional[str] = Query(None)):
+    """
+    Force-delete a bucket: empties ALL versions + delete markers first (handles versioned + Object Lock buckets),
+    then deletes the bucket itself.
+    """
+    try:
+        s3 = get_s3_client(tenant)
+        deleted_count = 0
+
+        # Paginate through ALL object versions and delete markers
+        paginator = s3.get_paginator('list_object_versions')
+        for page in paginator.paginate(Bucket=name):
+            objects_to_delete = []
+
+            for v in page.get('Versions', []):
+                objects_to_delete.append({'Key': v['Key'], 'VersionId': v['VersionId']})
+
+            for d in page.get('DeleteMarkers', []):
+                objects_to_delete.append({'Key': d['Key'], 'VersionId': d['VersionId']})
+
+            if objects_to_delete:
+                resp = s3.delete_objects(
+                    Bucket=name,
+                    Delete={'Objects': objects_to_delete, 'Quiet': True}
+                )
+                deleted_count += len(objects_to_delete)
+                errors = resp.get('Errors', [])
+                if errors:
+                    # Some objects couldn't be deleted (e.g. COMPLIANCE WORM lock) — report but continue
+                    raise HTTPException(
+                        status_code=409,
+                        detail=f"Could not empty bucket: {len(errors)} object(s) are WORM-locked and cannot be deleted. "
+                               f"First error: {errors[0].get('Message', '')}"
+                    )
+
+        # Also handle non-versioned objects (in case versioning was never enabled)
+        try:
+            resp = s3.list_objects_v2(Bucket=name)
+            plain = [{'Key': o['Key']} for o in resp.get('Contents', [])]
+            if plain:
+                s3.delete_objects(Bucket=name, Delete={'Objects': plain, 'Quiet': True})
+                deleted_count += len(plain)
+        except Exception:
+            pass
+
+        # Now delete the (now empty) bucket
+        s3.delete_bucket(Bucket=name)
+        return {"status": "success", "deleted_objects": deleted_count}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
 @router.get("/buckets/{name}/tags")
 def get_bucket_tags(name: str, tenant: Optional[str] = Query(None)):
     try:

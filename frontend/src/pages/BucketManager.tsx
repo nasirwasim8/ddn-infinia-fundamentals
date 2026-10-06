@@ -58,12 +58,9 @@ export default function BucketManager({ activeTenant }: Props) {
   const [dragActive, setDragActive]   = useState(false)
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set())
 
-  // Reload from localStorage + live list when tenant changes
+  // Reset everything on tenant change — don't load stale localStorage
   useEffect(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem(storageKey) || '[]')
-      setBuckets(saved)
-    } catch { setBuckets([]) }
+    setBuckets([])
     setLiveBuckets(null)
     setSelectedBucket(null)
     setObjects([])
@@ -74,7 +71,7 @@ export default function BucketManager({ activeTenant }: Props) {
     localStorage.setItem(storageKey, JSON.stringify(list))
   }
 
-  // Fetch live buckets from S3
+  // Fetch live buckets from S3 — live list is the single source of truth
   const fetchLiveBuckets = useCallback(async () => {
     setLoadingLive(true)
     try {
@@ -83,10 +80,18 @@ export default function BucketManager({ activeTenant }: Props) {
         typeof b === 'string' ? b : (b.Name || b.name || '')
       ).filter(Boolean)
       setLiveBuckets(names)
-      const saved = JSON.parse(localStorage.getItem(storageKey) || '[]')
-      const merged = Array.from(new Set([...saved, ...names]))
-      if (merged.length !== saved.length) saveBuckets(merged)
-    } catch { setLiveBuckets(null) }
+      // Replace localStorage with exactly what S3 reports — removes stale entries
+      saveBuckets(names)
+      // Deselect if the currently selected bucket no longer exists
+      setSelectedBucket(prev => (prev && names.includes(prev) ? prev : null))
+    } catch {
+      // S3 unreachable — fall back to cached list but mark all as potentially stale
+      setLiveBuckets(null)
+      try {
+        const cached = JSON.parse(localStorage.getItem(storageKey) || '[]')
+        setBuckets(cached)
+      } catch { setBuckets([]) }
+    }
     finally { setLoadingLive(false) }
   }, [tenant, storageKey])
 
@@ -142,11 +147,23 @@ export default function BucketManager({ activeTenant }: Props) {
     }
   }
 
-  // Remove from list (not from Infinia)
-  const removeBucket = (name: string) => {
-    if (!window.confirm(`Remove '${name}' from list? (Does NOT delete data on Infinia)`)) return
-    saveBuckets(buckets.filter(b => b !== name))
-    if (selectedBucket === name) { setSelectedBucket(null); setObjects([]) }
+  // Delete bucket from Infinia S3 — force endpoint empties all versions + delete markers first
+  const removeBucket = async (name: string) => {
+    const confirmed = window.confirm(
+      `Delete bucket "${name}" from Infinia?\n\nThis will permanently delete ALL objects and the bucket itself.\n\nThis CANNOT be undone.`
+    )
+    if (!confirmed) return
+
+    const toastId = toast.loading(`Deleting bucket "${name}"…`)
+    try {
+      await api.forceDeleteBucket(name, tenant)
+      toast.success(`Bucket "${name}" deleted.`, { id: toastId })
+      if (selectedBucket === name) { setSelectedBucket(null); setObjects([]) }
+      await fetchLiveBuckets()
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail || err?.message || 'Unknown error'
+      toast.error(`Delete failed: ${detail}`, { id: toastId })
+    }
   }
 
   // Upload object
@@ -275,7 +292,7 @@ export default function BucketManager({ activeTenant }: Props) {
                       <span style={{ fontSize: 10, color: '#888', background: 'var(--surface-hover)', padding: '1px 5px', borderRadius: 3, flexShrink: 0 }}>!</span>
                     )}
                     <button onClick={e => { e.stopPropagation(); removeBucket(name) }}
-                      title="Remove from list"
+                      title="Delete bucket from Infinia"
                       style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 2, opacity: 0.5, flexShrink: 0 }}>
                       <Trash2 size={12} />
                     </button>

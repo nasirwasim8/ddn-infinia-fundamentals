@@ -20,6 +20,7 @@ import CorsPolicy from './pages/CorsPolicy'
 import Benchmark from './pages/Benchmark'
 import Details from './pages/Details'
 import TenantIsolation from './pages/TenantIsolation'
+const NCPDemoFlow = lazy(() => import('./pages/NCPDemoFlow'))
 
 // Admin / Management Plane pages (lazy loaded)
 const AdminDashboard      = lazy(() => import('./pages/admin/AdminDashboard'))
@@ -64,6 +65,7 @@ const TABS = [
   { id: 'cors',              label: 'CORS & Policy',     icon: 'Globe',           group: 'advanced' },
   // NCP
   { id: 'tenant-isolation',  label: 'Tenant Isolation',  icon: 'ShieldCheck',     group: 'ncp' },
+  { id: 'ncp-demo-flow',     label: 'Demo Flow',         icon: 'PlayCircle',      group: 'ncp' },
   // Performance
   { id: 'benchmark',         label: 'Performance',       icon: 'BarChart2',       group: 'perf' },
 
@@ -126,6 +128,7 @@ export default function App() {
       case 'details':          return <Details />
       case 'admin-seeddata':   return <SeedData />
       case 'tenant-isolation': return <TenantIsolation />
+      case 'ncp-demo-flow':    return <NCPDemoFlow />
 
       default:                 return <AdminDashboard onNavigate={setActiveTab} />
     }

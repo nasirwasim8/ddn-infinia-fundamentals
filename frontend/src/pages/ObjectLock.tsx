@@ -28,8 +28,8 @@ export default function ObjectLock({ activeTenant }: { activeTenant?: string | n
     setObjects([]); setObjectKey(''); setLockEnabled(null)
     if (!selectedBucket) return
 
-    // Check if bucket has Object Lock enabled
-    api.getObjectLock(selectedBucket).then(res => {
+    // Check if bucket has Object Lock enabled — must pass activeTenant
+    api.getObjectLock(selectedBucket, activeTenant).then(res => {
       setLockEnabled(res.data.enabled === 'Enabled')
     }).catch(() => setLockEnabled(false))
 
@@ -54,12 +54,12 @@ export default function ObjectLock({ activeTenant }: { activeTenant?: string | n
     api.headObject(selectedBucket, objectKey, activeTenant).then(res => {
       setVersionId(res.data?.VersionId)
     }).catch(() => {})
-  }, [objectKey, selectedBucket])
+  }, [objectKey, selectedBucket, activeTenant])
 
   const checkRetention = async () => {
     if (!objectKey) return
     try {
-      const res = await api.getRetention(selectedBucket, objectKey)
+      const res = await api.getRetention(selectedBucket, objectKey, activeTenant)
       const r = res.data
       if (r?.Mode) {
         setRetentionInfo({ mode: r.Mode, date: r.RetainUntilDate })
@@ -80,7 +80,7 @@ export default function ObjectLock({ activeTenant }: { activeTenant?: string | n
   const applyLockConfig = async () => {
     if (!selectedBucket) return toast.error('Select a bucket first')
     try {
-      await api.setObjectLock(selectedBucket, { mode, days })
+      await api.setObjectLock(selectedBucket, { mode, days }, activeTenant)
       toast.success(`Default lock applied: ${mode} for ${days} days`)
     } catch (err: any) {
       toast.error('Failed to set Object Lock: ' + (err.response?.data?.detail || err.message))
@@ -95,7 +95,7 @@ export default function ObjectLock({ activeTenant }: { activeTenant?: string | n
       await api.setRetention(selectedBucket, objectKey, {
         mode,
         retain_until_date: date.toISOString()
-      })
+      }, activeTenant)
       toast.success('Retention saved — verifying…')
       await checkRetention()
     } catch (err: any) {
@@ -114,24 +114,54 @@ export default function ObjectLock({ activeTenant }: { activeTenant?: string | n
   const testDelete = async () => {
     if (!objectKey) return toast.error('Select an object first')
     setDemoState('testing')
-    setTimeout(async () => {
-      try {
-        // Must pass versionId — deleting without it only creates a delete marker (always succeeds)
-        // Deleting a specific version of a locked object is what triggers the WORM block
-        await api.deleteObject(selectedBucket, objectKey, activeTenant, versionId)
-        if (mode === 'GOVERNANCE') {
-          toast.error('Deleted in GOVERNANCE mode — admin keys can bypass GOVERNANCE. Switch to COMPLIANCE mode and try again.', { duration: 6000 })
-        } else {
-          toast.error('Object deleted — COMPLIANCE retention was not enforced. Infinia may not fully support per-object lock enforcement.', { duration: 6000 })
-        }
-        setDemoState('idle')
-        setRetentionInfo(null)
-      } catch (err: any) {
-        setDemoState('blocked')
-        toast.success('Delete blocked by WORM!', { icon: '🔒' })
-        setTimeout(() => setDemoState('idle'), 4000)
+
+    try {
+      // ── Resolve version ID reliably ──────────────────────────────────
+      // Without a VersionId, S3 only creates a delete MARKER which always
+      // succeeds — WORM is never triggered. We MUST delete the actual version.
+      let resolvedVersionId = versionId
+
+      if (!resolvedVersionId) {
+        // headObject didn't return VersionId — fetch from list_versions
+        try {
+          const vRes = await api.listVersions(selectedBucket, objectKey, activeTenant)
+          const versions: any[] = vRes.data?.versions || []
+          // Find latest non-delete-marker version for this key
+          const match = versions.find((v: any) => v.Key === objectKey && v.VersionId !== 'null')
+          resolvedVersionId = match?.VersionId
+        } catch { /* fallthrough */ }
       }
-    }, 800)
+
+      if (!resolvedVersionId) {
+        setDemoState('idle')
+        toast.error(
+          'No version ID found. Upload the file after enabling Object Lock on the bucket — only versioned objects are protected by WORM.',
+          { duration: 8000 }
+        )
+        return
+      }
+
+      // ── Attempt delete via backend — safely returns blocked/not-blocked ──
+      const res = await api.tryDeleteLocked(selectedBucket, objectKey, activeTenant, resolvedVersionId)
+      const result = res.data
+
+      if (result.blocked) {
+        setDemoState('blocked')
+        toast.success('Delete BLOCKED — WORM protection confirmed!', { icon: '🔒' })
+        setTimeout(() => setDemoState('idle'), 4000)
+      } else {
+        setDemoState('idle')
+        if (mode === 'GOVERNANCE') {
+          toast.error('Deleted in GOVERNANCE mode — admin keys can bypass GOVERNANCE. Switch to COMPLIANCE and try again.', { duration: 6000 })
+        } else {
+          toast.error('Object was deleted — COMPLIANCE retention was not enforced by Infinia on this version.', { duration: 6000 })
+        }
+        setRetentionInfo(null)
+      }
+    } catch {
+      setDemoState('idle')
+      toast.error('Delete test failed — check console for details.')
+    }
   }
 
    return (

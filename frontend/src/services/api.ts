@@ -11,6 +11,7 @@ export const testConnection = () => api.post('/config/test')
 export const listBuckets = (tenant?: string | null) => api.get('/buckets', { params: tenant ? { tenant } : {} })
 export const createBucket = (data: { name: string; enable_versioning?: boolean; enable_object_lock?: boolean }, tenant?: string | null) => api.post('/buckets', data, { params: tenant ? { tenant } : {} })
 export const deleteBucket = (name: string, tenant?: string | null) => api.delete(`/buckets/${name}`, { params: tenant ? { tenant } : {} })
+export const forceDeleteBucket = (name: string, tenant?: string | null) => api.delete(`/buckets/${name}/force`, { params: tenant ? { tenant } : {} })
 export const getBucketTags = (name: string, tenant?: string | null) => api.get(`/buckets/${name}/tags`, { params: tenant ? { tenant } : {} })
 export const getBucketAcl = (name: string, tenant?: string | null) => api.get(`/buckets/${name}/acl`, { params: tenant ? { tenant } : {} })
 
@@ -32,19 +33,19 @@ export const putObjectTags = (bucket: string, key: string, tags: any[]) => api.p
 // Versioning
 export const getVersioning = (bucket: string) => api.get(`/buckets/${bucket}/versioning`)
 export const setVersioning = (bucket: string, status: string) => api.put(`/buckets/${bucket}/versioning`, { status })
-export const listVersions = (bucket: string, prefix = '') => api.get(`/buckets/${bucket}/versions`, { params: { prefix } })
+export const listVersions = (bucket: string, prefix = '', tenant?: string | null) => api.get(`/buckets/${bucket}/versions`, { params: { prefix, ...(tenant ? { tenant } : {}) } })
 
 // Object Lock
-export const getObjectLock = (bucket: string) => api.get(`/buckets/${bucket}/object-lock`)
-export const setObjectLock = (bucket: string, data: any) => api.put(`/buckets/${bucket}/object-lock`, data)
-export const getRetention = (bucket: string, key: string) => api.get(`/buckets/${bucket}/objects/${encodeURIComponent(key)}/retention`)
-export const setRetention = (bucket: string, key: string, data: any) => api.put(`/buckets/${bucket}/objects/${encodeURIComponent(key)}/retention`, data)
-export const tryDeleteLocked = (bucket: string, key: string) => api.post(`/buckets/${bucket}/objects/${encodeURIComponent(key)}/try-delete-locked`)
+export const getObjectLock = (bucket: string, tenant?: string | null) => api.get(`/buckets/${bucket}/object-lock`, { params: tenant ? { tenant } : {} })
+export const setObjectLock = (bucket: string, data: any, tenant?: string | null) => api.put(`/buckets/${bucket}/object-lock`, data, { params: tenant ? { tenant } : {} })
+export const getRetention = (bucket: string, key: string, tenant?: string | null) => api.get(`/buckets/${bucket}/objects/${encodeURIComponent(key)}/retention`, { params: tenant ? { tenant } : {} })
+export const setRetention = (bucket: string, key: string, data: any, tenant?: string | null) => api.put(`/buckets/${bucket}/objects/${encodeURIComponent(key)}/retention`, data, { params: tenant ? { tenant } : {} })
+export const tryDeleteLocked = (bucket: string, key: string, tenant?: string | null, versionId?: string) => api.post(`/buckets/${bucket}/objects/${encodeURIComponent(key)}/try-delete-locked`, {}, { params: { ...(tenant ? { tenant } : {}), ...(versionId ? { version_id: versionId } : {}) } })
 
 // Legal Hold
-export const getLegalHold = (bucket: string, key: string) => api.get(`/buckets/${bucket}/objects/${encodeURIComponent(key)}/legal-hold`)
-export const setLegalHold = (bucket: string, key: string, status: string) => api.put(`/buckets/${bucket}/objects/${encodeURIComponent(key)}/legal-hold`, { status })
-export const tryDeleteHeld = (bucket: string, key: string) => api.post(`/buckets/${bucket}/objects/${encodeURIComponent(key)}/try-delete-held`)
+export const getLegalHold = (bucket: string, key: string, tenant?: string | null) => api.get(`/buckets/${bucket}/objects/${encodeURIComponent(key)}/legal-hold`, { params: tenant ? { tenant } : {} })
+export const setLegalHold = (bucket: string, key: string, status: string, tenant?: string | null) => api.put(`/buckets/${bucket}/objects/${encodeURIComponent(key)}/legal-hold`, { status }, { params: tenant ? { tenant } : {} })
+export const tryDeleteHeld = (bucket: string, key: string, tenant?: string | null) => api.post(`/buckets/${bucket}/objects/${encodeURIComponent(key)}/try-delete-held`, {}, { params: tenant ? { tenant } : {} })
 
 // Multipart
 export const initiateMultipart = (bucket: string, data: any) => api.post(`/buckets/${bucket}/multipart/initiate`, data)

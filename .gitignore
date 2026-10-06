@@ -19,6 +19,8 @@ dist/
 backend/infinia_config.json
 backend/infinia_token.json
 backend/infinia_s3_tenants.json
+automation/ansible/inventory.ini
+automation/ansible/s3_credentials_output.json
 
 # Logs
 *.log

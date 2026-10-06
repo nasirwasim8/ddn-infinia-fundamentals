@@ -1,0 +1,24 @@
+﻿# ── Infinia Cluster Inventory Example ─────────────────────────────────────────
+# Copy this file to inventory.ini and adjust with your cluster credentials.
+
+[infinia_nodes]
+infinia-01 ansible_host=192.168.1.100
+
+[infinia_nodes:vars]
+# SSH access (used for redcli tenant user creation, S3 access, and service creation)
+ansible_user=YOUR_SSH_USER
+ansible_password=YOUR_SSH_PASSWORD
+ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+ansible_python_interpreter=/usr/bin/python3
+
+# Control Plane REST API settings
+mgmt_server=192.168.1.100
+mgmt_port=443
+mgmt_user=realm_admin
+mgmt_password=YOUR_MGMT_PASSWORD
+mgmt_validate_certs=false
+
+# S3 Service defaults
+s3_port=8111
+s3_service_suffix=obj
+s3_vhost_domain=infinia.io

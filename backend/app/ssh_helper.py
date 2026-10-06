@@ -42,15 +42,37 @@ def ssh_exec(command: str) -> tuple[int, str, str]:
         client.close()
 
 
+def redcli_login(username: str = 'realm_admin', password: str = '') -> bool:
+    """
+    Log in to redcli on the Infinia node.
+    Returns True if login succeeded or was already authenticated.
+    """
+    if not password:
+        from app.config_mgmt import load_config as _lc
+        password = _lc().get('mgmt_password', '')
+    cmd = f"redcli user login {username} -p '{password}'"
+    exit_code, stdout, stderr = ssh_exec(cmd)
+    combined = stdout + stderr
+    return 'logged in' in combined.lower() or exit_code == 0
+
+
 def redcli_s3_access_add(username: str, tenant: str, expiry: str = '1y') -> dict:
     """
-    Run: redcli s3 access add <username> -t <tenant> -e <expiry>
+    Run: redcli user login (realm_admin) ; redcli s3 access add <username> -t <tenant> -e <expiry>
+    Login is chained in the SAME SSH connection to guarantee an authenticated session.
     Parse and return {s3_key, s3_secret, expiration, tenant, username}.
     Raises RuntimeError on failure.
     """
-    cmd = f"redcli s3 access add {username} -t {tenant} -e {expiry}"
-    exit_code, stdout, stderr = ssh_exec(cmd)
+    from app.config_mgmt import load_config as _lc
+    mgmt_pass = _lc().get('mgmt_password', '')
+    mgmt_user = _lc().get('mgmt_user', 'realm_admin')
 
+    # Chain login + key generation in one SSH session so redcli token is fresh
+    login_cmd = f"redcli user login {mgmt_user} -p '{mgmt_pass}'"
+    access_cmd = f"redcli s3 access add {username} -t {tenant} -e {expiry}"
+    cmd = f"{login_cmd} ; {access_cmd}"
+
+    exit_code, stdout, stderr = ssh_exec(cmd)
     output = stdout + stderr
 
     # Parse table output:
